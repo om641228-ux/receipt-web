@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
-const API_URL = 'https://surprising-reprieve.railway.app'; // ← ЗАМЕНИТЕ на URL вашего backend в Railway
+const API_URL = 'recept-web-back-production.up.railway.app'; // ← ЗАМЕНИТЕ на URL вашего backend в Railway
 const OBJECTS = ['other', 'Duqe', 'Maria', 'Kit', 'Dubai', 'Tich'];
 const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 'all'];
 const MAX_FILE_SIZE_MB = 2;
