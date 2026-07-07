@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
-const API_URL = 'https://backend-production-adc7.up.railway.app';
+const API_URL = 'https://surprising-reprieve.railway.app'; // ← ЗАМЕНИТЕ на URL вашего backend в Railway
 const OBJECTS = ['other', 'Duqe', 'Maria', 'Kit', 'Dubai', 'Tich'];
 const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 'all'];
 const MAX_FILE_SIZE_MB = 2;
@@ -243,7 +243,7 @@ function App() {
         let items = r.items;
         if (typeof items === 'string') { try { items = JSON.parse(items); } catch (e) { items = []; } }
         if (!Array.isArray(items)) items = [];
-        return { ...r, image_url: fixImageUrl(r.image_url), items: items, raw_text: r.raw_text || '' };
+        return { ...r, image_url: fixImageUrl(r.photo_url || r.image_url), items: items, raw_text: r.raw_text || '' };
       });
       setReceipts(processed);
       setSelectedReceiptIds(new Set());
@@ -594,11 +594,11 @@ function App() {
       }
 
       if (formats.includes('photo')) {
-        if (receipt.image_url) {
+        if (receipt.photo_url || receipt.image_url) {
           try {
-            const res = await fetch(receipt.image_url);
+            const res = await fetch(fixImageUrl(receipt.photo_url || receipt.image_url));
             const blob = await res.blob();
-            const ext = (receipt.image_url.split('.').pop().split('?')[0]) || 'jpg';
+            const ext = ((receipt.photo_url || receipt.image_url).split('.').pop().split('?')[0]) || 'jpg';
             if (subDir) {
               const fileHandle = await subDir.getFileHandle(`receipt.${ext}`, { create: true });
               const writable = await fileHandle.createWritable();
@@ -860,7 +860,7 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="modal-image-section">
-                {viewModal.image_url ? <img src={viewModal.image_url} alt="Чек" className="modal-image" /> : <div className="no-image">Нет фото</div>}
+                {(viewModal.photo_url || viewModal.image_url) ? <img src={fixImageUrl(viewModal.photo_url || viewModal.image_url)} alt="Чек" className="modal-image" /> : <div className="no-image">Нет фото</div>}
               </div>
               <div className="modal-info">
                 <div className="info-block">
@@ -1153,7 +1153,7 @@ function App() {
             <div className="saved-receipt-card">
               <h3> Чек сохранён</h3>
               <div className="receipt-preview">
-                {lastSavedReceipt.image_url ? <img src={lastSavedReceipt.image_url} alt="Чек" className="receipt-image" /> : <div className="no-image-thumb" style={{width:250,height:200}}> Нет фото</div>}
+                {(lastSavedReceipt.photo_url || lastSavedReceipt.image_url) ? <img src={fixImageUrl(lastSavedReceipt.photo_url || lastSavedReceipt.image_url)} alt="Чек" className="receipt-image" /> : <div className="no-image-thumb" style={{width:250,height:200}}> Нет фото</div>}
                 <div className="receipt-info">
                   <p><strong>ID:</strong> {lastSavedReceipt.id}</p>
                   <p><strong>Магазин:</strong> {lastSavedReceipt.store_name_ru || lastSavedReceipt.store_name || '—'}</p>
@@ -1293,8 +1293,8 @@ function App() {
                       <p style={{ fontSize: 12, color: '#3498db', margin: '4px 0', fontWeight: 500 }}>
                         <HighlightText text={formatOwnerName(receipt)} query={searchQuery} />
                       </p>
-                      {receipt.image_url ? (
-                        <img src={receipt.image_url} alt="Чек" className="receipt-thumb" onError={(e) => { e.target.style.display = 'none'; }} />
+                      {(receipt.photo_url || receipt.image_url) ? (
+                        <img src={fixImageUrl(receipt.photo_url || receipt.image_url)} alt="Чек" className="receipt-thumb" onError={(e) => { e.target.style.display = 'none'; }} />
                       ) : (
                         <div className="no-image-thumb"> Чек</div>
                       )}
@@ -1337,8 +1337,8 @@ function App() {
 
             {!recognizing && lastSavedReceipt && (
               <div>
-                {(lastSavedReceipt.image_url || previewUrl) && (
-                  <img src={lastSavedReceipt.image_url || previewUrl} alt="Чек" style={{ width: '100%', maxHeight: 260, objectFit: 'contain', borderRadius: 12, background: '#000', marginBottom: 14 }} />
+                {((lastSavedReceipt.photo_url || lastSavedReceipt.image_url) || previewUrl) && (
+                  <img src={fixImageUrl(lastSavedReceipt.photo_url || lastSavedReceipt.image_url) || previewUrl} alt="Чек" style={{ width: '100%', maxHeight: 260, objectFit: 'contain', borderRadius: 12, background: '#000', marginBottom: 14 }} />
                 )}
                 <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 12, padding: 14, lineHeight: 1.6 }}>
                   <div><strong>Магазин:</strong> {lastSavedReceipt.store_name_ru || lastSavedReceipt.store_name || '—'}</div>
