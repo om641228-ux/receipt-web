@@ -119,8 +119,8 @@ function validateDate(dateStr) {
 
 function detectCurrency(fullText, defaultCurrency) {
   if (fullText.includes('AED') || fullText.includes('د.إ') || /DIRHAM|DIRHAMS/i.test(fullText) || /DUBAI|UAE/i.test(fullText)) return 'AED';
-  if (fullText.includes('€') || /EURO|EUR\b/i.test(fullText)) return 'EUR';
-  if (fullText.includes('$') || /USD\b|DOLLAR/i.test(fullText)) return 'USD';
+  if (fullText.includes('€') || /EURO|EUR/i.test(fullText)) return 'EUR';
+  if (fullText.includes('$') || /USD|DOLLAR/i.test(fullText)) return 'USD';
   if (fullText.includes('₽') || /RUB|RUBLE|РУБ/i.test(fullText)) return 'RUB';
   if (defaultCurrency && defaultCurrency !== 'auto') return defaultCurrency;
   return 'AED';
@@ -698,6 +698,7 @@ app.post('/api/reprocess-receipt', authOwners.requireAuth, async (req, res) => {
 });
 
 // ====== HEALTH & ROOT ======
+app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 app.get('/', (req, res) => res.json({ status: 'ok', message: 'Receipt Manager API', timestamp: new Date().toISOString() }));
 app.get('/api/health', (req, res) => res.json({
   status: 'ok', gemini: process.env.GEMINI_API_KEY ? '✅' : '❌', groq: process.env.GROQ_API_KEY ? '✅' : '❌',
