@@ -5,7 +5,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 // ⚠️ ЗАМЕНИТЕ на реальный URL вашего backend из Railway!
 // Как найти: Railway Dashboard → сервис receipt-web-back → Settings → Domain
 // Пример: https://receipt-web-back-production.up.railway.app
-const API_URL = 'recept-web-back-production.up.railway.app';
+const API_URL = 'https://recept-web-back-production.up.railway.app';
 
 const OBJECTS = ['other', 'Duqe', 'Maria', 'Kit', 'Dubai', 'Tich'];
 const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 'all'];
