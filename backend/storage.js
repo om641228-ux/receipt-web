@@ -42,4 +42,4 @@ async function deleteReceiptPhoto(filePath) {
   }
 }
 
-module.exports = { uploadReceiptPhoto, deleteReceiptPhoto };
+module.exports = { uploadReceiptPhoto, deleteReceiptPhoto, BUCKET_NAME };

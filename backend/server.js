@@ -394,6 +394,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('   Health: http://localhost:' + PORT + '/health');
   console.log('   Supabase URL:', process.env.SUPABASE_URL ? 'SET' : 'MISSING');
   console.log('   Supabase Key:', process.env.SUPABASE_KEY ? 'SET' : 'MISSING');
+  console.log('   Bucket:', require('./storage').BUCKET_NAME || 'receipt-images');
   console.log('   Routes registered:');
   console.log('     POST /api/login');
   console.log('     GET  /api/me');
