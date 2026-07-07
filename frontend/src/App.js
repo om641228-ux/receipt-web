@@ -2,7 +2,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
-const API_URL = 'recept-web-back-production.up.railway.app'; // ← ЗАМЕНИТЕ на URL вашего backend в Railway
+// ⚠️ ЗАМЕНИТЕ на реальный URL вашего backend из Railway!
+// Как найти: Railway Dashboard → сервис receipt-web-back → Settings → Domain
+// Пример: https://receipt-web-back-production.up.railway.app
+const API_URL = 'https://surprising-reprieve.railway.app';
+
 const OBJECTS = ['other', 'Duqe', 'Maria', 'Kit', 'Dubai', 'Tich'];
 const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 'all'];
 const MAX_FILE_SIZE_MB = 2;
@@ -104,6 +108,9 @@ function HighlightText({ text, query, style = {} }) {
   );
 }
 
+// Регистрируем плагин один раз глобально (не внутри компонента)
+const ReceiptScanner = registerPlugin('ReceiptScannerPlugin');
+
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || null);
   const [user, setUser] = useState(null);
@@ -113,6 +120,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('upload');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [serverStatus, setServerStatus] = useState('checking'); // 'checking' | 'ok' | 'error'
 
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(0);
@@ -146,12 +154,42 @@ function App() {
   const receiptCount = receipts.filter(r => r.document_type === 'receipt' || !r.document_type).length;
   const invoiceCount = receipts.filter(r => r.document_type === 'invoice').length;
 
+  // === Проверка доступности сервера ===
+  const checkServerHealth = useCallback(async () => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${API_URL}/health`, { 
+        method: 'GET',
+        signal: controller.signal,
+        mode: 'cors'
+      });
+      clearTimeout(timeout);
+      if (res.ok) {
+        setServerStatus('ok');
+        return true;
+      }
+      setServerStatus('error');
+      return false;
+    } catch (e) {
+      console.error('Server health check failed:', e.message);
+      setServerStatus('error');
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    checkServerHealth();
+    const interval = setInterval(checkServerHealth, 30000);
+    return () => clearInterval(interval);
+  }, [checkServerHealth]);
+
   useEffect(() => {
     return () => { previewUrls.forEach(url => URL.revokeObjectURL(url)); };
   }, [previewUrls]);
 
   // === iOS NATIVE SCANNER v2 ===
-  const ReceiptScanner = registerPlugin('ReceiptScannerPlugin');
+  // Плагин зарегистрирован один раз за пределами компонента (см. выше)
 
   const scanDocumentNative = async () => {
     console.log('[SCANNER] Platform:', Capacitor.getPlatform());
@@ -189,7 +227,6 @@ function App() {
         setPreviewUrl(url);
         setLastSavedReceipt(null);
         setFolderResults([]);
-        // ✅ открываем полноэкранный результат и сразу распознаём отсканированный чек
         setScanResultOpen(true);
         recognizeAndSave(file);
       }
@@ -201,12 +238,33 @@ function App() {
 
   const login = async () => {
     setLoginError('');
+
+    // Сначала проверяем сервер
+    const isServerOk = await checkServerHealth();
+    if (!isServerOk) {
+      setLoginError(`Сервер недоступен. Проверьте URL: ${API_URL}`);
+      return;
+    }
+
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
       const res = await fetch(`${API_URL}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password })
+        body: JSON.stringify({ password }),
+        signal: controller.signal
       });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch { data = { error: `Сервер вернул ${res.status}` }; }
+        setLoginError(data.error || `Ошибка сервера: ${res.status}`);
+        return;
+      }
+
       const data = await res.json();
       if (data.success) {
         setToken(data.token);
@@ -217,7 +275,14 @@ function App() {
         setLoginError(data.error || 'Неверный пароль');
       }
     } catch (e) {
-      setLoginError('Ошибка соединения с сервером');
+      console.error('Login error:', e);
+      if (e.name === 'AbortError') {
+        setLoginError('Сервер не отвечает (таймаут). Проверьте URL бэкенда.');
+      } else if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
+        setLoginError(`Не удалось подключиться к серверу. URL: ${API_URL}`);
+      } else {
+        setLoginError('Ошибка соединения: ' + e.message);
+      }
     }
   };
 
@@ -234,22 +299,33 @@ function App() {
     if (!authToken) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/receipts?token=${authToken}`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(`${API_URL}/api/receipts?token=${authToken}`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+
       if (res.status === 401) { logout(); return; }
-      if (!res.ok) throw new Error('Ошибка загрузки');
+      if (!res.ok) throw new Error(`Ошибка загрузки: ${res.status}`);
       const data = await res.json();
       const raw = Array.isArray(data) ? data : (data.receipts || []);
       const processed = raw.map(r => {
         let items = r.items;
         if (typeof items === 'string') { try { items = JSON.parse(items); } catch (e) { items = []; } }
         if (!Array.isArray(items)) items = [];
-        return { ...r, image_url: fixImageUrl(r.photo_url || r.image_url), items: items, raw_text: r.raw_text || '' };
+        return { 
+          ...r, 
+          image_url: fixImageUrl(r.photo_url || r.image_url), 
+          items: items, 
+          raw_text: r.raw_text || r.recognized_text || '' 
+        };
       });
       setReceipts(processed);
       setSelectedReceiptIds(new Set());
       setCurrentPage(1);
     } catch (e) {
-      console.error('Ошибка загрузки:', e);
+      console.error('Ошибка загрузки чеков:', e);
       setReceipts([]);
     }
     setLoading(false);
@@ -258,7 +334,7 @@ function App() {
   useEffect(() => {
     if (token) {
       setAuthChecking(true);
-      fetch(`${API_URL}/api/me?token=${token}`)
+      fetch(`${API_URL}/api/me?token=${token}`, { signal: AbortSignal.timeout(8000) })
         .then(async r => { if (!r.ok) throw new Error('Auth failed'); return r.json(); })
         .then(data => {
           const userData = data.user || data;
@@ -338,7 +414,15 @@ function App() {
       formData.append('object', object);
       formData.append('token', token);
 
-      const res = await fetch(`${API_URL}/api/upload-receipt?token=${token}`, { method: 'POST', body: formData });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000);
+      const res = await fetch(`${API_URL}/api/upload-receipt?token=${token}`, { 
+        method: 'POST', 
+        body: formData,
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+
       const text = await res.text();
       let data;
       try { data = JSON.parse(text); } catch { throw new Error(`Сервер вернул ${res.status}: ${text.slice(0, 200)}`); }
@@ -356,7 +440,6 @@ function App() {
     setRecognizing(false);
   };
 
-  // Очистить выбранные файлы/превью
   const clearScanState = () => {
     setSelectedFiles([]);
     setPreviewUrls([]);
@@ -365,13 +448,11 @@ function App() {
     setLastSavedReceipt(null);
   };
 
-  // ✅ «Сохранить» / «Выход» — оставить чек (он уже сохранён) и закрыть экран результата
   const finishScan = () => {
     setScanResultOpen(false);
     clearScanState();
   };
 
-  // ✅ «Переснять» — удалить только что распознанный чек и сразу открыть сканер заново
   const rescanScan = async () => {
     const r = lastSavedReceipt;
     setScanResultOpen(false);
@@ -444,7 +525,10 @@ function App() {
     if (errorCount === 0) {
       alert(`✅ Все ${successCount} чеков успешно распознаны и сохранены!`);
     } else {
-      alert(`✅ Успешно: ${successCount}\n❌ Ошибок: ${errorCount}\n\nСмотрите детали ниже.`);
+      alert(`✅ Успешно: ${successCount}
+❌ Ошибок: ${errorCount}
+
+Смотрите детали ниже.`);
     }
   };
 
@@ -824,9 +908,37 @@ function App() {
       <div className="App">
         <div className="login-box">
           <h1>Receipt Manager</h1>
+
+          {/* Индикатор статуса сервера */}
+          <div style={{ 
+            padding: '8px 12px', 
+            borderRadius: 6, 
+            marginBottom: 12, 
+            fontSize: 13,
+            background: serverStatus === 'ok' ? '#d4edda' : serverStatus === 'error' ? '#f8d7da' : '#fff3cd',
+            color: serverStatus === 'ok' ? '#155724' : serverStatus === 'error' ? '#721c24' : '#856404',
+            border: `1px solid ${serverStatus === 'ok' ? '#c3e6cb' : serverStatus === 'error' ? '#f5c6cb' : '#ffeeba'}`
+          }}>
+            {serverStatus === 'checking' && '⏳ Проверка сервера...'}
+            {serverStatus === 'ok' && '✅ Сервер доступен'}
+            {serverStatus === 'error' && `❌ Сервер недоступен: ${API_URL}`}
+          </div>
+
           <input type="password" placeholder="Введите пароль" value={password} onChange={e => setPassword(e.target.value)} onKeyPress={e => e.key === 'Enter' && login()} />
-          <button onClick={login}>Войти</button>
-          {loginError && <p className="error">{loginError}</p>}
+          <button onClick={login} disabled={serverStatus === 'checking'}>
+            {serverStatus === 'checking' ? 'Проверка...' : 'Войти'}
+          </button>
+
+          {loginError && (
+            <div style={{ marginTop: 10, padding: 10, background: '#f8d7da', borderRadius: 6, color: '#721c24', fontSize: 13 }}>
+              <strong>Ошибка:</strong> {loginError}
+              <div style={{ marginTop: 6, fontSize: 12, color: '#555' }}>
+                URL бэкенда: <code style={{ background: '#eee', padding: '2px 4px', borderRadius: 3 }}>{API_URL}</code>
+                <br/>
+                Проверьте в Railway Dashboard → receipt-web-back → Settings → Domain
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1320,7 +1432,6 @@ function App() {
           )}
         </div>
       )}
-      {/* ✅ Полноэкранный экран результата сканера: распознанный чек + Сохранить/Переснять/Выход */}
       {scanResultOpen && (
         <div style={{ position: 'fixed', inset: 0, background: '#0b1220', zIndex: 10000, display: 'flex', flexDirection: 'column', color: '#fff' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,0.12)' }}>
