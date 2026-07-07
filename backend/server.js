@@ -9,8 +9,13 @@ const { uploadReceiptPhoto, deleteReceiptPhoto } = require('./storage');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
+// === CORS — разрешаем запросы с фронтенда ===
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-token']
+}));
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -38,13 +43,6 @@ function mapReceipt(row) {
 
 function mapReceipts(rows) {
   return (rows || []).map(mapReceipt);
-}
-
-function checkToken(req, res, next) {
-  const token = req.query.token || req.body.token || req.headers['x-token'];
-  if (!token) return res.status(401).json({ success: false, error: 'No token' });
-  req.token = token;
-  next();
 }
 
 // ============================================================
@@ -82,6 +80,7 @@ const USERS = {
 };
 
 app.post('/api/login', (req, res) => {
+  console.log('POST /api/login', req.body);
   const { password } = req.body;
   const user = Object.values(USERS).find(u => u.password === password);
   if (user) {
@@ -92,7 +91,9 @@ app.post('/api/login', (req, res) => {
   }
 });
 
-app.get('/api/me', checkToken, (req, res) => {
+app.get('/api/me', (req, res) => {
+  const token = req.query.token || req.headers['x-token'];
+  if (!token) return res.status(401).json({ success: false, error: 'No token' });
   res.json({ success: true, user: { id: 'admin', name: 'Администратор', role: 'admin' } });
 });
 
@@ -263,12 +264,12 @@ app.post('/api/bulk-delete', async (req, res) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No ids' });
-    
+
     const { data: receipts } = await supabase.from('receipts').select('photo_path').in('id', ids);
     for (const r of (receipts || [])) {
       if (r.photo_path) await deleteReceiptPhoto(r.photo_path);
     }
-    
+
     const { error } = await supabase.from('receipts').delete().in('id', ids);
     if (error) throw error;
     res.json({ success: true });
@@ -308,15 +309,15 @@ app.post('/api/export-excel', async (req, res) => {
     const { receiptIds } = req.body;
     let query = supabase.from('receipts').select('*').order('created_at', { ascending: false });
     if (receiptIds && receiptIds.length > 0) query = query.in('id', receiptIds);
-    
+
     const { data, error } = await query;
     if (error) throw error;
-    
+
     let csv = '\uFEFFID;Магазин;Дата;Итого;Валюта;Товаров;Объект;Добавил\n';
     for (const r of mapReceipts(data)) {
       csv += `${r.id};${(r.store_name_ru || r.store_name || '').replace(/;/g, ',')};${r.receipt_date || r.purchase_date || ''};${r.total_amount || ''};${r.currency || ''};${r.items?.length || 0};${r.object || ''};${r.owner_name || r.owner_id || ''}\n`;
     }
-    
+
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename=receipts.csv');
     res.send(csv);
@@ -369,6 +370,14 @@ app.get('/api/list-ocrspace-models', (req, res) => {
 });
 
 // ============================================================
+// 404 — если роут не найден
+// ============================================================
+app.use((req, res) => {
+  console.log('404:', req.method, req.path);
+  res.status(404).json({ success: false, error: `Route not found: ${req.method} ${req.path}` });
+});
+
+// ============================================================
 // ERROR HANDLING
 // ============================================================
 app.use((err, req, res, next) => {
@@ -385,4 +394,20 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('   Health: http://localhost:' + PORT + '/health');
   console.log('   Supabase URL:', process.env.SUPABASE_URL ? 'SET' : 'MISSING');
   console.log('   Supabase Key:', process.env.SUPABASE_KEY ? 'SET' : 'MISSING');
+  console.log('   Routes registered:');
+  console.log('     POST /api/login');
+  console.log('     GET  /api/me');
+  console.log('     POST /api/upload-receipt');
+  console.log('     GET  /api/receipts');
+  console.log('     GET  /api/receipts/:id');
+  console.log('     PUT  /api/receipts/:id');
+  console.log('     DELETE /api/receipts/:id');
+  console.log('     POST /api/bulk-delete');
+  console.log('     POST /api/bulk-update-object');
+  console.log('     POST /api/bulk-update-currency');
+  console.log('     POST /api/export-excel');
+  console.log('     POST /api/reprocess-receipt');
+  console.log('     GET  /api/list-gemini-models');
+  console.log('     GET  /api/list-groq-models');
+  console.log('     GET  /api/list-ocrspace-models');
 });
