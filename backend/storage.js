@@ -1,6 +1,6 @@
 const { supabase } = require('./supabase');
 
-const BUCKET_NAME = 'receipt-photos';
+const BUCKET_NAME = 'receipt-images';
 
 async function uploadReceiptPhoto(fileBuffer, originalName, mimeType) {
   const timestamp = Date.now();
