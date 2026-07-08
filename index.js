@@ -26,7 +26,7 @@ const upload = multer({
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
 if (!supabaseUrl || !supabaseKey) {
-  console.error('❌ Missing SUPABASE_URL or SUPABASE_KEY/SUPABASE_SERVICE_ROLE_KEY');
+  console.error('❌ Missing Supabase env vars');
   process.exit(1);
 }
 const supabase = createClient(supabaseUrl, supabaseKey, {
@@ -58,28 +58,23 @@ async function compressImage(buffer, maxWidth = 1500, quality = 85) {
     console.log(`📉 Compressed: ${buffer.length} → ${compressed.length} bytes (${((1 - compressed.length/buffer.length)*100).toFixed(0)}%)`);
     return compressed;
   } catch (e) {
-    console.error('⚠️ sharp compression failed:', e.message);
+    console.error('⚠️ Compression failed:', e.message);
     return buffer;
   }
 }
 
 async function uploadImageToSupabase(buffer, filename, contentType) {
   console.log('📤 Uploading to Supabase Storage:', filename);
-  try {
-    const { data, error } = await supabase.storage.from('receipt-images').upload(filename, buffer, { contentType: contentType || 'image/jpeg', upsert: true });
-    if (error) {
-      console.error('❌ Supabase upload error:', error.message);
-      throw new Error(`Supabase Storage upload failed: ${error.message}`);
-    }
-    const { data: urlData } = supabase.storage.from('receipt-images').getPublicUrl(filename);
-    const publicUrl = urlData?.publicUrl;
-    if (!publicUrl) throw new Error('Supabase Storage returned no publicUrl');
-    console.log('✅ Supabase public URL:', publicUrl);
-    return publicUrl;
-  } catch (e) {
-    console.error('❌ uploadImageToSupabase error:', e.message);
-    throw e;
+  const { data, error } = await supabase.storage.from('receipts').upload(filename, buffer, { contentType: contentType || 'image/jpeg', upsert: true });
+  if (error) {
+    console.error('❌ Supabase Storage upload error:', error);
+    throw new Error(`Supabase Storage upload failed: ${error.message || JSON.stringify(error)}`);
   }
+  const { data: urlData } = supabase.storage.from('receipts').getPublicUrl(filename);
+  const publicUrl = urlData?.publicUrl;
+  if (!publicUrl) throw new Error('Supabase Storage returned no publicUrl');
+  console.log('✅ Supabase public URL:', publicUrl);
+  return publicUrl;
 }
 
 function cleanItems(items) {
@@ -124,8 +119,8 @@ function validateDate(dateStr) {
 
 function detectCurrency(fullText, defaultCurrency) {
   if (fullText.includes('AED') || fullText.includes('د.إ') || /DIRHAM|DIRHAMS/i.test(fullText) || /DUBAI|UAE/i.test(fullText)) return 'AED';
-  if (fullText.includes('€') || /EURO|EUR\b/i.test(fullText)) return 'EUR';
-  if (fullText.includes('$') || /USD\b|DOLLAR/i.test(fullText)) return 'USD';
+  if (fullText.includes('€') || /EURO|EUR/i.test(fullText)) return 'EUR';
+  if (fullText.includes('$') || /USD|DOLLAR/i.test(fullText)) return 'USD';
   if (fullText.includes('₽') || /RUB|RUBLE|РУБ/i.test(fullText)) return 'RUB';
   if (defaultCurrency && defaultCurrency !== 'auto') return defaultCurrency;
   return 'AED';
@@ -442,8 +437,8 @@ app.delete('/api/receipts/:id', authOwners.requireAuth, authOwners.requireAdmin,
     const { data: receipt, error: fetchErr } = await supabase.from('receipts').select('image_url').eq('id', id).single();
     if (fetchErr) console.error('Fetch before delete error:', fetchErr);
     if (receipt?.image_url && receipt.image_url.includes('supabase')) {
-      const p = receipt.image_url.split('/receipt-images/')[1];
-      if (p) await supabase.storage.from('receipt-images').remove([p]).catch(()=>{});
+      const p = receipt.image_url.split('/receipts/')[1];
+      if (p) await supabase.storage.from('receipts').remove([p]).catch(()=>{});
     }
     const { error } = await supabase.from('receipts').delete().eq('id', id);
     if (error) throw error;
@@ -458,8 +453,8 @@ app.post('/api/bulk-delete', authOwners.requireAuth, authOwners.requireAdmin, as
     const { data: receipts } = await supabase.from('receipts').select('id, image_url').in('id', ids);
     for (const r of (receipts || [])) {
       if (r.image_url && r.image_url.includes('supabase')) {
-        const p = r.image_url.split('/receipt-images/')[1];
-        if (p) await supabase.storage.from('receipt-images').remove([p]).catch(()=>{});
+        const p = r.image_url.split('/receipts/')[1];
+        if (p) await supabase.storage.from('receipts').remove([p]).catch(()=>{});
       }
     }
     const { error } = await supabase.from('receipts').delete().in('id', ids);
@@ -577,6 +572,7 @@ app.post('/api/upload-receipt', upload.single('image'), authOwners.requireAuth, 
       tax_amount: sanitizeForDB(recognized?.tax_amount), tax_rate: sanitizeForDB(recognized?.tax_rate),
       items: itemsToSave, raw_text: rawTextToSave, object: OBJECTS.includes(object) ? object : 'other',
       created_at: new Date().toISOString(),
+      // ====== ВЛАДЕЛЕЦ ======
       owner_id: req.user?.id || null,
       owner_name: req.user?.name || null
     };
