@@ -136,7 +136,7 @@ function App() {
   const [showModelSelector, setShowModelSelector] = useState(false);
   const [exportMode, setExportMode] = useState('all');
 
-  const [models, setModels] = useState(FALLBACK_MODELS);
+  const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(false);
 
   const [filterType, setFilterType] = useState('all');
@@ -1039,8 +1039,8 @@ function App() {
       {activeTab === 'upload' && (
         <div className="upload-section">
           <div className="top-controls">
-            <button className="model-toggle-btn" onClick={() => {setShowModelSelector(!showModelSelector); if (!models.length) loadModels();}}>
-               {showModelSelector ? 'Скрыть' : `Выбор модели (${models.length})`}
+            <button className="model-toggle-btn" onClick={() => {setShowModelSelector(!showModelSelector); loadModels();}}>
+               {showModelSelector ? 'Скрыть' : `Выбор модели (${models.length || '...'})`}
             </button>
             {showModelSelector && (
               <div className="model-dropdown" style={{ maxHeight: '400px', overflowY: 'auto' }}>
@@ -1061,52 +1061,58 @@ function App() {
             <div className="current-model"><small>Модель: <strong>{selectedModel}</strong></small></div>
           </div>
 
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 15 }}>
-            <button
-              onClick={handleCameraClick}
-              style={{
-                flex: 1,
-                padding: '14px 20px',
-                background: '#27ae60',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 10,
-                fontSize: 16,
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8
-              }}
-            >
-              📷 {Capacitor.getPlatform() === 'ios' ? 'Камера (сканер чеков)' : 'Фото'}
+          {/* Row: Photo + File + Folder + Currency + Type + Object */}
+          <div className="upload-toolbar">
+            <button className="btn-camera" onClick={handleCameraClick}>
+              📷 {Capacitor.getPlatform() === 'ios' ? 'Камера' : 'Фото'}
             </button>
-            <label
-              htmlFor="file-input"
-              style={{
-                flex: 1,
-                padding: '14px 20px',
-                background: '#3498db',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 10,
-                fontSize: 16,
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                textAlign: 'center'
-              }}
-            >
+            <label htmlFor="file-input" className="btn-file">
               📁 Выбрать файл
             </label>
+            <label htmlFor="folder-input" className="btn-folder">
+              📁 Распознать папку
+            </label>
+
+            <div className="toolbar-controls">
+              <div className="control-group compact">
+                <label>Валюта:</label>
+                <select value={currency} onChange={e => setCurrency(e.target.value)}>
+                  <option value="auto">Auto (определить)</option>
+                  <option value="AED">AED (Дирхам)</option>
+                  <option value="EUR">EUR (Евро)</option>
+                  <option value="USD">USD (Доллар)</option>
+                  <option value="RUB">RUB (Рубль)</option>
+                </select>
+              </div>
+              <div className="control-group compact">
+                <label>Тип:</label>
+                <select value={docType} onChange={e => setDocType(e.target.value)}>
+                  <option value="receipt">Чек</option>
+                  <option value="invoice">Фактура</option>
+                </select>
+              </div>
+              <div className="control-group compact">
+                <label>Объект:</label>
+                <select value={object} onChange={e => setObject(e.target.value)}>
+                  {OBJECTS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+            </div>
           </div>
 
+          {/* Hidden inputs */}
+          <input type="file" accept="image/*" multiple onChange={handleFileSelect} id="file-input" style={{ display: 'none' }} />
+          <input type="file" id="folder-input" webkitdirectory="" directory="" multiple accept="image/*" onChange={handleFolderSelect} style={{ display: 'none' }} />
+
+          {/* Recognize button */}
+          <div className="recognize-bar">
+            <button className="recognize-main-btn" onClick={() => recognizeAndSave()} disabled={!selectedFiles.length || recognizing}>
+              {recognizing ? '⏳ Распознавание...' : 'Распознать и сохранить'}
+            </button>
+          </div>
+
+          {/* Drop zone */}
           <div className="drop-zone" onDrop={handleDrop} onDragOver={e => e.preventDefault()}>
-            <input type="file" accept="image/*" multiple onChange={handleFileSelect} id="file-input" style={{ display: 'none' }} />
             <label htmlFor="file-input" style={{ display: 'block', width: '100%', cursor: 'pointer' }}>
               {previewUrl ? (
                 <div className="preview-container">
@@ -1127,7 +1133,7 @@ function App() {
                 </div>
               ) : (
                 <div className="drop-text">
-                  <p> Перетащите фото чека сюда</p>
+                  <p>Перетащите фото чека сюда</p>
                   <p>или нажмите для выбора файлов</p>
                   <p className="hint">Можно выбрать несколько файлов</p>
                 </div>
@@ -1135,53 +1141,15 @@ function App() {
             </label>
           </div>
 
-          <div style={{ marginTop: 15, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input
-              type="file"
-              id="folder-input"
-              webkitdirectory=""
-              directory=""
-              multiple
-              accept="image/*"
-              onChange={handleFolderSelect}
-              style={{ display: 'none' }}
-            />
-            <label
-              htmlFor="folder-input"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '10px 18px',
-                background: '#9b59b6',
-                color: '#fff',
-                borderRadius: 8,
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: 15,
-                userSelect: 'none'
-              }}
-            >
-               Распознать папку
-            </label>
-            <span style={{ fontSize: 13, color: '#7f8c8d' }}>
-              Выберите папку — все фото из неё будут распознаны автоматически
-            </span>
-          </div>
-
           {folderProgress.active && (
-            <div style={{ marginTop: 15, padding: 15, background: '#ecf0f1', borderRadius: 8 }}>
+            <div className="folder-progress">
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                 <strong> Распознавание папки...</strong>
                 <span>{folderProgress.current} / {folderProgress.total}</span>
               </div>
-              <div style={{ width: '100%', height: 20, background: '#bdc3c7', borderRadius: 10, overflow: 'hidden' }}>
+              <div className="folder-progress-bar">
                 <div style={{
-                  width: `${folderProgress.total > 0 ? (folderProgress.current / folderProgress.total * 100) : 0}%`,
-                  height: '100%',
-                  background: '#27ae60',
-                  transition: 'width 0.3s',
-                  borderRadius: 10
+                  width: `${folderProgress.total > 0 ? (folderProgress.current / folderProgress.total * 100) : 0}%`
                 }} />
               </div>
               <p style={{ fontSize: 12, color: '#555', marginTop: 6 }}>
@@ -1229,37 +1197,7 @@ function App() {
             </div>
           )}
 
-          <div className="controls-row">
-            <div className="control-group">
-              <label>Валюта:</label>
-              <select value={currency} onChange={e => setCurrency(e.target.value)}>
-                <option value="auto">Auto (определить)</option>
-                <option value="AED">AED (Дирхам)</option>
-                <option value="EUR">EUR (Евро)</option>
-                <option value="USD">USD (Доллар)</option>
-                <option value="RUB">RUB (Рубль)</option>
-              </select>
-            </div>
-            <div className="control-group">
-              <label>Тип:</label>
-              <select value={docType} onChange={e => setDocType(e.target.value)}>
-                <option value="receipt">Чек</option>
-                <option value="invoice">Фактура</option>
-              </select>
-            </div>
-            <div className="control-group">
-              <label>Объект:</label>
-              <select value={object} onChange={e => setObject(e.target.value)}>
-                {OBJECTS.map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </div>
-          </div>
 
-          <div className="recognize-bar">
-            <button className="recognize-main-btn" onClick={() => recognizeAndSave()} disabled={!selectedFiles.length || recognizing}>
-              {recognizing ? '⏳ Распознавание...' : ' Распознать и сохранить'}
-            </button>
-          </div>
 
           {lastSavedReceipt && !scanResultOpen && (
             <div className="saved-receipt-card">
@@ -1433,13 +1371,13 @@ function App() {
         </div>
       )}
       {scanResultOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: '#0b1220', zIndex: 10000, display: 'flex', flexDirection: 'column', color: '#fff' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,0.12)' }}>
+        <div className="scan-overlay">
+          <div className="scan-overlay-header">
             <strong style={{ fontSize: 17 }}>{recognizing ? '⏳ Распознаю чек…' : '✅ Распознанный чек'}</strong>
-            <button onClick={finishScan} style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: 'none', borderRadius: 10, padding: '8px 14px', fontSize: 15, fontWeight: 600 }}>✕ Выход</button>
+            <button onClick={finishScan}>✕ Выход</button>
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+          <div className="scan-overlay-body">
             {recognizing && (
               <div style={{ textAlign: 'center', marginTop: 40, fontSize: 16, opacity: 0.9 }}>
                 Обрабатываю снимок и распознаю текст…
@@ -1482,9 +1420,9 @@ function App() {
           </div>
 
           {!recognizing && lastSavedReceipt && (
-            <div style={{ display: 'flex', gap: 10, padding: 16, borderTop: '1px solid rgba(255,255,255,0.12)' }}>
-              <button onClick={finishScan} style={{ flex: 1, background: '#22c55e', color: '#fff', border: 'none', borderRadius: 12, padding: '16px', fontSize: 16, fontWeight: 700 }}>✅ Сохранить</button>
-              <button onClick={rescanScan} style={{ flex: 1, background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 12, padding: '16px', fontSize: 16, fontWeight: 700 }}>🔄 Переснять</button>
+            <div className="scan-overlay-footer">
+              <button onClick={finishScan}>✅ Сохранить</button>
+              <button onClick={rescanScan}>🔄 Переснять</button>
             </div>
           )}
         </div>

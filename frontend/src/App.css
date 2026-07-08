@@ -35,6 +35,132 @@
   padding: 0;
 }
 
+
+/* ============================================
+   UPLOAD TOOLBAR (compact layout as in screenshot 12)
+   ============================================ */
+
+.upload-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.upload-toolbar .btn-camera,
+.upload-toolbar .btn-file,
+.upload-toolbar .btn-folder {
+  padding: 10px 18px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.upload-toolbar .btn-camera {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: white;
+}
+
+.upload-toolbar .btn-camera:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  filter: brightness(1.05);
+}
+
+.upload-toolbar .btn-file {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+}
+
+.upload-toolbar .btn-file:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  filter: brightness(1.05);
+}
+
+.upload-toolbar .btn-folder {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: white;
+}
+
+.upload-toolbar .btn-folder:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  filter: brightness(1.05);
+}
+
+.toolbar-controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-left: auto;
+}
+
+.control-group.compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: auto;
+  flex: 0 0 auto;
+}
+
+.control-group.compact label {
+  margin-bottom: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.control-group.compact select {
+  padding: 8px 28px 8px 10px;
+  font-size: 13px;
+  min-width: 120px;
+}
+
+/* ============================================
+   RECOGNIZE BAR (above drop zone)
+   ============================================ */
+
+.recognize-bar {
+  margin-bottom: 16px;
+}
+
+.recognize-main-btn {
+  width: 100%;
+  padding: 14px 24px;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
+  letter-spacing: 0.3px;
+}
+
+.recognize-main-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  filter: brightness(1.05);
+}
+
+.recognize-main-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
 body {
   font-family: var(--font);
   background: var(--bg);
