@@ -1170,18 +1170,14 @@ function App() {
           </div>
 
           {folderProgress.active && (
-            <div style={{ marginTop: 15, padding: 15, background: '#ecf0f1', borderRadius: 8 }}>
+            <div className="folder-progress">
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                 <strong> Распознавание папки...</strong>
                 <span>{folderProgress.current} / {folderProgress.total}</span>
               </div>
-              <div style={{ width: '100%', height: 20, background: '#bdc3c7', borderRadius: 10, overflow: 'hidden' }}>
+              <div className="folder-progress-bar">
                 <div style={{
-                  width: `${folderProgress.total > 0 ? (folderProgress.current / folderProgress.total * 100) : 0}%`,
-                  height: '100%',
-                  background: '#27ae60',
-                  transition: 'width 0.3s',
-                  borderRadius: 10
+                  width: `${folderProgress.total > 0 ? (folderProgress.current / folderProgress.total * 100) : 0}%`
                 }} />
               </div>
               <p style={{ fontSize: 12, color: '#555', marginTop: 6 }}>
@@ -1433,13 +1429,13 @@ function App() {
         </div>
       )}
       {scanResultOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: '#0b1220', zIndex: 10000, display: 'flex', flexDirection: 'column', color: '#fff' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,0.12)' }}>
+        <div className="scan-overlay">
+          <div className="scan-overlay-header">
             <strong style={{ fontSize: 17 }}>{recognizing ? '⏳ Распознаю чек…' : '✅ Распознанный чек'}</strong>
-            <button onClick={finishScan} style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: 'none', borderRadius: 10, padding: '8px 14px', fontSize: 15, fontWeight: 600 }}>✕ Выход</button>
+            <button onClick={finishScan}>✕ Выход</button>
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+          <div className="scan-overlay-body">
             {recognizing && (
               <div style={{ textAlign: 'center', marginTop: 40, fontSize: 16, opacity: 0.9 }}>
                 Обрабатываю снимок и распознаю текст…
@@ -1482,9 +1478,9 @@ function App() {
           </div>
 
           {!recognizing && lastSavedReceipt && (
-            <div style={{ display: 'flex', gap: 10, padding: 16, borderTop: '1px solid rgba(255,255,255,0.12)' }}>
-              <button onClick={finishScan} style={{ flex: 1, background: '#22c55e', color: '#fff', border: 'none', borderRadius: 12, padding: '16px', fontSize: 16, fontWeight: 700 }}>✅ Сохранить</button>
-              <button onClick={rescanScan} style={{ flex: 1, background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 12, padding: '16px', fontSize: 16, fontWeight: 700 }}>🔄 Переснять</button>
+            <div className="scan-overlay-footer">
+              <button onClick={finishScan}>✅ Сохранить</button>
+              <button onClick={rescanScan}>🔄 Переснять</button>
             </div>
           )}
         </div>
