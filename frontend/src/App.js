@@ -129,7 +129,8 @@ function App() {
   const [currency, setCurrency] = useState('auto');
   const [docType, setDocType] = useState('receipt');
   const [object, setObject] = useState('other');
-  const [showModelSelector, setShowModelSelector] = useState(false);
+  const [modelModalOpen, setModelModalOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState('');
   const [exportMode, setExportMode] = useState('all');
 
   const [models, setModels] = useState([]);
@@ -837,6 +838,14 @@ function App() {
     return '—';
   };
 
+  const activeModelDisplay = models.find(m => m.name === selectedModel) || FALLBACK_MODELS.find(m => m.name === selectedModel) || { displayName: selectedModel, provider: '?' };
+
+  const filteredModels = models.filter(m => {
+    if (!modelSearch) return true;
+    const q = modelSearch.toLowerCase();
+    return m.displayName.toLowerCase().includes(q) || m.provider.toLowerCase().includes(q) || m.name.toLowerCase().includes(q);
+  });
+
   if (authChecking) {
     return (
       <div className="App">
@@ -889,25 +898,17 @@ function App() {
     <div className="App">
       <header className="mini-header">
         <div className="header-left">
-          <button className="model-toggle-btn" onClick={() => {setShowModelSelector(!showModelSelector); loadModels();}}>
-            {showModelSelector ? 'Скрыть' : `Выбор модели (${models.length || '...'})`}
-          </button>
-          {showModelSelector && (
-            <div className="model-dropdown" style={{ maxHeight: '400px', overflowY: 'auto' }}>
-              {modelsLoading ? <p>Загрузка...</p> : (
-                <div className="models-grid">
-                  {models.map(model => (
-                    <div key={`${model.provider}-${model.name}`} className={`model-option ${selectedModel === model.name ? 'selected' : ''}`}
-                         onClick={() => { setSelectedModel(model.name); setShowModelSelector(false); }} title={`${model.provider} — ${model.displayName}`}>
-                      <span className="provider-badge" style={{ backgroundColor: getProviderColor(model.provider) }}>{model.provider}</span>
-                      <span className="model-name">{model.displayName}</span>
-                      <span className="status-ok">✅</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+          <div className="model-selector-wrap">
+            <button className="model-toggle-btn" onClick={() => { setModelModalOpen(true); loadModels(); }}>
+              Выбор модели
+            </button>
+            <div className="model-active-badge">
+              <span className="provider-badge" style={{ backgroundColor: getProviderColor(activeModelDisplay.provider) }}>
+                {activeModelDisplay.provider}
+              </span>
+              <span className="model-active-name">{activeModelDisplay.displayName}</span>
             </div>
-          )}
+          </div>
           <nav className="tabs-inline">
             <button className={activeTab === 'upload' ? 'active' : ''} onClick={() => setActiveTab('upload')}>Загрузка</button>
             <button className={activeTab === 'list' ? 'active' : ''} onClick={() => {setActiveTab('list'); loadReceipts();}}>
@@ -920,6 +921,64 @@ function App() {
           <button className="logout-btn" onClick={logout}>Выйти</button>
         </div>
       </header>
+
+      {/* Model Selection Modal */}
+      {modelModalOpen && (
+        <div className="model-modal-overlay" onClick={() => setModelModalOpen(false)}>
+          <div className="model-modal-content" onClick={e => e.stopPropagation()}>
+            <div className="model-modal-header">
+              <h2>Выбор модели AI</h2>
+              <button className="modal-close" onClick={() => setModelModalOpen(false)}>✕</button>
+            </div>
+            <div className="model-modal-search">
+              <input
+                type="text"
+                placeholder="Поиск модели..."
+                value={modelSearch}
+                onChange={e => setModelSearch(e.target.value)}
+              />
+            </div>
+            <div className="model-modal-body">
+              {modelsLoading ? (
+                <div className="loading-center"><div className="spinner"></div><p>Загрузка моделей...</p></div>
+              ) : (
+                <div className="model-modal-grid">
+                  {filteredModels.map(model => (
+                    <div
+                      key={`${model.provider}-${model.name}`}
+                      className={`model-card ${selectedModel === model.name ? 'selected' : ''}`}
+                      onClick={() => { setSelectedModel(model.name); setModelModalOpen(false); }}
+                      title={`${model.provider} — ${model.displayName}`}
+                    >
+                      <div className="model-card-top">
+                        <span className="provider-badge" style={{ backgroundColor: getProviderColor(model.provider) }}>
+                          {model.provider}
+                        </span>
+                        {selectedModel === model.name && <span className="model-check">✅</span>}
+                      </div>
+                      <div className="model-card-name">{model.displayName}</div>
+                      <div className="model-card-id">{model.name}</div>
+                    </div>
+                  ))}
+                  {filteredModels.length === 0 && (
+                    <div className="empty-state">Модели не найдены</div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="model-modal-footer">
+              <div className="model-modal-active-bar">
+                <strong>Активная модель:</strong>
+                <span className="provider-badge" style={{ backgroundColor: getProviderColor(activeModelDisplay.provider) }}>
+                  {activeModelDisplay.provider}
+                </span>
+                <span>{activeModelDisplay.displayName}</span>
+              </div>
+              <button className="model-modal-close-btn" onClick={() => setModelModalOpen(false)}>Закрыть</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {viewModal && (
         <div className="modal-overlay" onClick={() => setViewModal(null)}>
