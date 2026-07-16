@@ -85,6 +85,28 @@ function compressImageFile(file, maxWidth = 1600, maxHeight = 2400, quality = 0.
   });
 }
 
+// Универсальное форматирование распознанного текста:
+// — новый формат (модули с ══════) выводится как есть;
+// — старые записи, где raw_text сохранён JSON-массивом ["a","b"], разворачиваются построчно;
+// — если внутри строки JSON-объект с полем raw_text — извлекаем его.
+function formatRawText(text) {
+  if (!text) return '';
+  const str = String(text).trim();
+  if (str.startsWith('[') && str.endsWith(']')) {
+    try {
+      const arr = JSON.parse(str);
+      if (Array.isArray(arr)) return arr.map(x => String(x)).join('\n');
+    } catch (e) {}
+  }
+  if (str.startsWith('{') && str.endsWith('}')) {
+    try {
+      const obj = JSON.parse(str);
+      if (obj && typeof obj.raw_text === 'string') return formatRawText(obj.raw_text);
+    } catch (e) {}
+  }
+  return str;
+}
+
 function HighlightText({ text, query, style = {} }) {
   if (!query || !text) return <span style={style}>{text || ''}</span>;
   const q = query.toLowerCase().trim();
@@ -1090,7 +1112,7 @@ function App() {
                 {viewModal.raw_text && (
                   <div className="info-block">
                     <h3>Распознанный текст</h3>
-                    <pre className="raw-text"><HighlightText text={viewModal.raw_text} query={searchQuery} /></pre>
+                    <pre className="raw-text" style={{ whiteSpace: 'pre-wrap' }}><HighlightText text={formatRawText(viewModal.raw_text)} query={searchQuery} /></pre>
                   </div>
                 )}
               </div>
@@ -1219,7 +1241,7 @@ function App() {
                 {lastSavedReceipt.raw_text && (
                   <details className="result-raw-text">
                     <summary>Распознанный текст</summary>
-                    <pre>{lastSavedReceipt.raw_text}</pre>
+                    <pre style={{ whiteSpace: 'pre-wrap' }}>{formatRawText(lastSavedReceipt.raw_text)}</pre>
                   </details>
                 )}
               </div>
@@ -1451,7 +1473,7 @@ function App() {
                 {lastSavedReceipt.raw_text && (
                   <div style={{ marginTop: 12 }}>
                     <div style={{ fontWeight: 600, marginBottom: 6 }}>Распознанный текст:</div>
-                    <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap', background: 'rgba(0,0,0,0.35)', padding: 12, borderRadius: 10, maxHeight: 220, overflow: 'auto' }}>{lastSavedReceipt.raw_text}</pre>
+                    <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap', background: 'rgba(0,0,0,0.35)', padding: 12, borderRadius: 10, maxHeight: 220, overflow: 'auto' }}>{formatRawText(lastSavedReceipt.raw_text)}</pre>
                   </div>
                 )}
               </div>
