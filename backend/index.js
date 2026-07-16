@@ -169,13 +169,30 @@ async function recognizeWithGemini(imageBuffer, modelName, currency, docType) {
   return parseAIResponse(text);
 }
 
+// Алиасы: короткие имена фронта → реальные ID моделей в Groq API
+const GROQ_ALIASES = {
+  'llama-4-scout': 'meta-llama/llama-4-scout-17b-16e-instruct',
+  'llama-4-maverick': 'meta-llama/llama-4-maverick-17b-128e-instruct',
+  'llama-3.2-90b': 'llama-3.2-90b-vision-preview',
+  'llama-3.2-11b': 'llama-3.2-11b-vision-preview',
+  'llama-3.3-70b': 'llama-3.3-70b-versatile',
+  'llama-3.1-8b': 'llama-3.1-8b-instant',
+  'mixtral': 'mixtral-8x7b-32768',
+  'gemma': 'gemma2-9b-it'
+};
+
+function resolveGroqModel(model) {
+  const raw = String(model || '').replace(/^groq-/, '');
+  return GROQ_ALIASES[raw] || raw || 'meta-llama/llama-4-scout-17b-16e-instruct';
+}
+
 async function recognizeWithGroq(imageBuffer, modelName, currency, docType) {
   if (!groq) throw new Error('Groq API key not configured');
   const base64 = imageBuffer.toString('base64');
   const prompt = buildReceiptPrompt(currency, docType);
   
   const response = await groq.chat.completions.create({
-    model: modelName || 'llama-3.2-90b-vision-preview',
+    model: resolveGroqModel(modelName),
     messages: [
       {
         role: 'user',
@@ -464,8 +481,7 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
       if (model.startsWith('gemini')) {
         receiptData = await recognizeWithGemini(processedBuffer, model, currency, docType);
       } else if (model.startsWith('groq')) {
-        const groqModel = model.replace('groq-', '');
-        receiptData = await recognizeWithGroq(processedBuffer, groqModel, currency, docType);
+        receiptData = await recognizeWithGroq(processedBuffer, model, currency, docType);
       } else if (model.startsWith('ocrspace')) {
         const engine = model.replace('ocrspace-', '');
         receiptData = await recognizeWithOCRSpace(processedBuffer, engine, currency, docType);
@@ -539,7 +555,7 @@ app.post('/api/reprocess-receipt', requireAuth, async (req, res) => {
     if (model.startsWith('gemini')) {
       receiptData = await recognizeWithGemini(buffer, model, currency, docType);
     } else if (model.startsWith('groq')) {
-      receiptData = await recognizeWithGroq(buffer, model.replace('groq-', ''), currency, docType);
+      receiptData = await recognizeWithGroq(buffer, model, currency, docType);
     } else {
       receiptData = await recognizeWithGemini(buffer, 'gemini-1.5-flash', currency, docType);
     }
@@ -728,6 +744,160 @@ app.get('/api/list-ocrspace-models', async (req, res) => {
       { id: 'engine3', name: 'Engine 3 (Handwriting)' }
     ]
   });
+});
+
+// ========== MODEL CHECKER (опрос моделей AI) ==========
+const FALLBACK_GEMINI_IDS = [
+  'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash',
+  'gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'
+];
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+  ]);
+}
+
+function prettifyModelName(id) {
+  return String(id).split('/').pop()
+    .replace(/[-_.]/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const i = idx++;
+      try { results[i] = await fn(items[i]); }
+      catch (e) { results[i] = { error: e.message }; }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+async function checkGeminiModels() {
+  if (!genAI) {
+    return FALLBACK_GEMINI_IDS.map(id => ({
+      name: id, displayName: prettifyModelName(id), provider: 'Gemini',
+      active: false, ms: null, error: 'GEMINI_API_KEY не задан'
+    }));
+  }
+  let ids = FALLBACK_GEMINI_IDS;
+  try {
+    const res = await axios.get(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}&pageSize=100`,
+      { timeout: 15000 }
+    );
+    const listed = (res.data.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => m.name.replace(/^models\//, ''))
+      .filter(id => /gemini/i.test(id) && !/embedding|aqa/i.test(id));
+    if (listed.length > 0) ids = listed;
+  } catch (e) {
+    console.warn('Gemini models list failed, using fallback list:', e.message);
+  }
+  return mapWithConcurrency(ids, 4, async (id) => {
+    const t0 = Date.now();
+    try {
+      const model = genAI.getGenerativeModel({ model: id, generationConfig: { maxOutputTokens: 8 } });
+      await withTimeout(model.generateContent('Reply with OK'), 12000);
+      return { name: id, displayName: prettifyModelName(id), provider: 'Gemini', active: true, ms: Date.now() - t0, error: null };
+    } catch (e) {
+      return { name: id, displayName: prettifyModelName(id), provider: 'Gemini', active: false, ms: null, error: String(e.message || 'error').slice(0, 120) };
+    }
+  });
+}
+
+async function checkGroqModels() {
+  const FALLBACK_GROQ = Object.values(GROQ_ALIASES);
+  if (!groq) {
+    return FALLBACK_GROQ.map(id => ({
+      name: 'groq-' + id, displayName: prettifyModelName(id), provider: 'Groq',
+      active: false, ms: null, error: 'GROQ_API_KEY не задан'
+    }));
+  }
+  let ids = FALLBACK_GROQ;
+  try {
+    const list = await groq.models.list();
+    const listed = (list.data || [])
+      .map(m => m.id)
+      .filter(id => id && !/whisper|playai|tts|guard|prompt-guard/i.test(id));
+    if (listed.length > 0) ids = listed;
+  } catch (e) {
+    console.warn('Groq models list failed, using fallback list:', e.message);
+  }
+  return mapWithConcurrency(ids, 3, async (id) => {
+    const t0 = Date.now();
+    try {
+      await withTimeout(groq.chat.completions.create({
+        model: id,
+        messages: [{ role: 'user', content: 'Reply with OK' }],
+        max_tokens: 4
+      }), 12000);
+      return { name: 'groq-' + id, displayName: prettifyModelName(id), provider: 'Groq', active: true, ms: Date.now() - t0, error: null };
+    } catch (e) {
+      return { name: 'groq-' + id, displayName: prettifyModelName(id), provider: 'Groq', active: false, ms: null, error: String(e.message || 'error').slice(0, 120) };
+    }
+  });
+}
+
+async function checkOCRSpaceModels() {
+  const engines = [
+    { name: 'ocrspace-engine1', displayName: 'OCR.space Engine 1 (Basic)', engine: '1' },
+    { name: 'ocrspace-engine2', displayName: 'OCR.space Engine 2 (Advanced)', engine: '2' },
+    { name: 'ocrspace-engine3', displayName: 'OCR.space Engine 3 (Handwriting)', engine: '3' }
+  ];
+  if (!process.env.OCRSPACE_API_KEY) {
+    return engines.map(e => ({ ...e, provider: 'OCR.space', active: false, ms: null, error: 'OCRSPACE_API_KEY не задан' }));
+  }
+  let tiny;
+  try {
+    tiny = await sharp({ create: { width: 80, height: 30, channels: 3, background: '#ffffff' } }).jpeg({ quality: 70 }).toBuffer();
+  } catch (e) {
+    tiny = Buffer.from('ping');
+  }
+  return mapWithConcurrency(engines, 3, async (eng) => {
+    const t0 = Date.now();
+    try {
+      const form = new FormData();
+      form.append('apikey', process.env.OCRSPACE_API_KEY);
+      form.append('language', 'eng');
+      form.append('file', tiny, { filename: 'ping.jpg', contentType: 'image/jpeg' });
+      form.append('OCREngine', eng.engine);
+      const res = await withTimeout(
+        axios.post('https://api.ocr.space/parse/image', form, { headers: form.getHeaders(), timeout: 30000 }),
+        35000
+      );
+      const ok = res.data && !res.data.IsErroredOnProcessing;
+      return {
+        name: eng.name, displayName: eng.displayName, provider: 'OCR.space',
+        active: !!ok, ms: ok ? Date.now() - t0 : null,
+        error: ok ? null : String((res.data && res.data.ErrorMessage && res.data.ErrorMessage[0]) || 'OCR error').slice(0, 120)
+      };
+    } catch (e) {
+      return { name: eng.name, displayName: eng.displayName, provider: 'OCR.space', active: false, ms: null, error: String(e.message || 'error').slice(0, 120) };
+    }
+  });
+}
+
+app.get('/api/check-models', async (req, res) => {
+  try {
+    const [geminiModels, groqModels, ocrModels] = await Promise.all([
+      checkGeminiModels().catch(() => []),
+      checkGroqModels().catch(() => []),
+      checkOCRSpaceModels().catch(() => [])
+    ]);
+    res.json({
+      checked_at: new Date().toISOString(),
+      models: [...ocrModels, ...geminiModels, ...groqModels]
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ========== START ==========

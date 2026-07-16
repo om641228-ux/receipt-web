@@ -745,25 +745,23 @@ function App() {
 
   const loadModels = async () => {
     setModelsLoading(true);
+    setModels([]);
     try {
-      const endpoints = [
-        { url: `${API_URL}/api/list-gemini-models`, provider: 'Gemini' },
-        { url: `${API_URL}/api/list-groq-models`, provider: 'Groq' },
-        { url: `${API_URL}/api/list-ocrspace-models`, provider: 'OCR.space' }
-      ];
-      let allModels = [];
-      for (const endpoint of endpoints) {
-        try {
-          const res = await fetch(endpoint.url);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.models) allModels = [...allModels, ...data.models.map(m => ({ name: m.id, displayName: m.name || m.id, provider: endpoint.provider, status: 'ok' }))];
-          }
-        } catch (e) {}
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 90000);
+      const res = await fetch(`${API_URL}/api/check-models`, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.models && data.models.length > 0) {
+        setModels(data.models);
+      } else {
+        setModels(FALLBACK_MODELS.map(m => ({ ...m, active: null, ms: null, error: 'Не проверена' })));
       }
-      if (allModels.length === 0) allModels = FALLBACK_MODELS;
-      setModels(allModels);
-    } catch (e) { setModels(FALLBACK_MODELS); }
+    } catch (e) {
+      console.error('check-models error:', e);
+      setModels(FALLBACK_MODELS.map(m => ({ ...m, active: null, ms: null, error: 'Не проверена' })));
+    }
     setModelsLoading(false);
   };
 
@@ -928,6 +926,15 @@ function App() {
           <div className="model-modal-content" onClick={e => e.stopPropagation()}>
             <div className="model-modal-header">
               <h2>Выбор модели AI</h2>
+              <button
+                className="model-refresh-btn"
+                onClick={loadModels}
+                disabled={modelsLoading}
+                title="Опросить модели заново"
+                style={{ marginRight: 8, padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', background: modelsLoading ? '#f0f0f0' : '#fff', cursor: modelsLoading ? 'not-allowed' : 'pointer', fontSize: 13 }}
+              >
+                {modelsLoading ? '⏳ Опрос...' : '🔄 Обновить'}
+              </button>
               <button className="modal-close" onClick={() => setModelModalOpen(false)}>✕</button>
             </div>
             <div className="model-modal-search">
@@ -940,29 +947,74 @@ function App() {
             </div>
             <div className="model-modal-body">
               {modelsLoading ? (
-                <div className="loading-center"><div className="spinner"></div><p>Загрузка моделей...</p></div>
+                <div className="loading-center">
+                  <div className="spinner"></div>
+                  <p>Опрашиваем модели AI...</p>
+                  <p style={{ fontSize: 12, color: '#888' }}>Каждая модель проверяется реальным запросом — это может занять до 30–40 секунд</p>
+                </div>
               ) : (
-                <div className="model-modal-grid">
-                  {filteredModels.map(model => (
-                    <div
-                      key={`${model.provider}-${model.name}`}
-                      className={`model-card ${selectedModel === model.name ? 'selected' : ''}`}
-                      onClick={() => { setSelectedModel(model.name); setModelModalOpen(false); }}
-                      title={`${model.provider} — ${model.displayName}`}
-                    >
-                      <div className="model-card-top">
-                        <span className="provider-badge" style={{ backgroundColor: getProviderColor(model.provider) }}>
-                          {model.provider}
-                        </span>
-                        {selectedModel === model.name && <span className="model-check">✅</span>}
-                      </div>
-                      <div className="model-card-name">{model.displayName}</div>
-                      <div className="model-card-id">{model.name}</div>
-                    </div>
-                  ))}
-                  {filteredModels.length === 0 && (
-                    <div className="empty-state">Модели не найдены</div>
-                  )}
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: '#f5f5f7', textAlign: 'left' }}>
+                        <th style={{ padding: '8px 6px', borderBottom: '2px solid #e0e0e0', width: 30 }}></th>
+                        <th style={{ padding: '8px 6px', borderBottom: '2px solid #e0e0e0' }}>Модель</th>
+                        <th style={{ padding: '8px 6px', borderBottom: '2px solid #e0e0e0' }}>ID</th>
+                        <th style={{ padding: '8px 6px', borderBottom: '2px solid #e0e0e0' }}>Провайдер</th>
+                        <th style={{ padding: '8px 6px', borderBottom: '2px solid #e0e0e0' }}>Статус</th>
+                        <th style={{ padding: '8px 6px', borderBottom: '2px solid #e0e0e0', textAlign: 'right' }}>Отклик</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredModels.map(model => {
+                        const isSelected = selectedModel === model.name;
+                        const isActive = model.active === true;
+                        const isUnknown = model.active === null || model.active === undefined;
+                        const clickable = isActive || isUnknown;
+                        return (
+                          <tr
+                            key={`${model.provider}-${model.name}`}
+                            onClick={() => { if (clickable) { setSelectedModel(model.name); setModelModalOpen(false); } }}
+                            title={model.error ? `${model.displayName}: ${model.error}` : `${model.provider} — ${model.displayName}`}
+                            style={{
+                              cursor: clickable ? 'pointer' : 'not-allowed',
+                              opacity: isActive || isSelected ? 1 : 0.45,
+                              background: isSelected ? '#e8f0fe' : 'transparent',
+                              transition: 'background 0.15s'
+                            }}
+                            onMouseEnter={e => { if (clickable && !isSelected) e.currentTarget.style.background = '#f8f9fa'; }}
+                            onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            <td style={{ padding: '7px 6px', borderBottom: '1px solid #eee', textAlign: 'center' }}>
+                              {isSelected ? '✅' : ''}
+                            </td>
+                            <td style={{ padding: '7px 6px', borderBottom: '1px solid #eee', fontWeight: isSelected ? 600 : 400 }}>
+                              {model.displayName}
+                            </td>
+                            <td style={{ padding: '7px 6px', borderBottom: '1px solid #eee', color: '#888', fontSize: 11, wordBreak: 'break-all', maxWidth: 200 }}>
+                              {model.name}
+                            </td>
+                            <td style={{ padding: '7px 6px', borderBottom: '1px solid #eee' }}>
+                              <span className="provider-badge" style={{ backgroundColor: getProviderColor(model.provider) }}>
+                                {model.provider}
+                              </span>
+                            </td>
+                            <td style={{ padding: '7px 6px', borderBottom: '1px solid #eee', whiteSpace: 'nowrap' }}>
+                              {isActive && <span style={{ color: '#2e7d32', fontWeight: 600 }}>✅ Активна</span>}
+                              {!isActive && !isUnknown && <span style={{ color: '#c62828', fontWeight: 600 }}>❌ Не активна</span>}
+                              {isUnknown && <span style={{ color: '#888' }}>➖ Не проверена</span>}
+                            </td>
+                            <td style={{ padding: '7px 6px', borderBottom: '1px solid #eee', textAlign: 'right', color: '#666', fontSize: 12 }}>
+                              {isActive && model.ms != null ? `${(model.ms / 1000).toFixed(1)} с` : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {filteredModels.length === 0 && (
+                        <tr><td colSpan={6} style={{ padding: 20, textAlign: 'center', color: '#888' }}>Модели не найдены</td></tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
