@@ -212,26 +212,21 @@ async function recognizeWithOCRSpace(imageBuffer, engine, currency, docType) {
   const parsed = res.data?.ParsedResults?.[0]?.ParsedText || '';
   if (!parsed) throw new Error('OCR.space returned empty text');
   
-  // Fallback to Gemini for structured parsing
   return recognizeWithGemini(imageBuffer, 'gemini-1.5-flash', currency, docType);
 }
 
 function parseAIResponse(text) {
-  // Extract JSON from response
   let jsonStr = text;
   
-  // Remove markdown code blocks
   const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (codeBlockMatch) jsonStr = codeBlockMatch[1];
   
-  // Find JSON object
   const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
   if (jsonMatch) jsonStr = jsonMatch[0];
   
   try {
     const data = JSON.parse(jsonStr);
     
-    // Validate and normalize
     const result = {
       store_name: data.store_name || data.store || data.merchant_name || null,
       store_name_ru: data.store_name_ru || data.store_ru || null,
@@ -251,7 +246,6 @@ function parseAIResponse(text) {
     return result;
   } catch (e) {
     console.error('JSON parse error:', e, 'Text:', text.substring(0, 500));
-    // Return raw text as fallback
     return {
       store_name: null,
       store_name_ru: null,
@@ -274,10 +268,8 @@ function normalizeDate(dateStr) {
   if (!dateStr) return null;
   const str = String(dateStr).trim();
   
-  // ISO format
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
   
-  // DD/MM/YYYY or DD.MM.YYYY
   const ddmmyyyy = str.match(/^(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{4})$/);
   if (ddmmyyyy) {
     const [, d, m, y] = ddmmyyyy;
@@ -339,32 +331,107 @@ async function uploadToStorage(buffer, filename, userId) {
   return urlData.publicUrl;
 }
 
-// ========== SAVE RECEIPT ==========
+// ========== UNIVERSAL SAVE — фильтрует только существующие колонки ==========
+let knownColumns = null;
+
+async function getTableColumns() {
+  if (knownColumns) return knownColumns;
+  
+  try {
+    // Получаем информацию о колонках через RPC или пробную вставку
+    const { data, error } = await supabaseAdmin
+      .from('receipts')
+      .select('*')
+      .limit(1);
+    
+    if (error) throw error;
+    
+    if (data && data.length > 0) {
+      knownColumns = Object.keys(data[0]);
+    } else {
+      // Пустая таблица — пробуем вставить минимальный объект
+      const testInsert = { store_name: null, raw_text: null };
+      const { error: insertError } = await supabaseAdmin
+        .from('receipts')
+        .insert([testInsert]);
+      
+      if (insertError) {
+        // Если ошибка о колонке — извлекаем из сообщения
+        const colMatch = insertError.message?.match(/column ["']?(\w+)["']?/);
+        if (colMatch) {
+          const badCol = colMatch[1];
+          delete testInsert[badCol];
+        }
+      }
+      
+      // Удаляем тестовую запись
+      await supabaseAdmin.from('receipts').delete().eq('store_name', null);
+      
+      // Повторяем пока не получим список колонок
+      const { data: freshData } = await supabaseAdmin.from('receipts').select('*').limit(1);
+      knownColumns = freshData && freshData.length > 0 ? Object.keys(freshData[0]) : [
+        'id', 'store_name', 'store_name_ru', 'receipt_date', 'receipt_time',
+        'total_amount', 'subtotal', 'tax_amount', 'tax_rate', 'currency',
+        'items', 'image_url', 'raw_text', 'document_type', 'object',
+        'recognition_method', 'recognized_at', 'created_at', 'owner_id', 'owner_name'
+      ];
+    }
+  } catch (e) {
+    console.warn('Could not detect columns, using fallback list:', e.message);
+    knownColumns = [
+      'id', 'store_name', 'store_name_ru', 'receipt_date', 'receipt_time',
+      'total_amount', 'subtotal', 'tax_amount', 'tax_rate', 'currency',
+      'items', 'image_url', 'raw_text', 'document_type', 'object',
+      'recognition_method', 'recognized_at', 'created_at', 'owner_id', 'owner_name'
+    ];
+  }
+  
+  return knownColumns;
+}
+
+function filterRecordByColumns(record, columns) {
+  const filtered = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (columns.includes(key)) {
+      filtered[key] = value;
+    } else {
+      console.log(`Skipping unknown column: ${key}`);
+    }
+  }
+  return filtered;
+}
+
 async function saveReceiptToDB(receiptData, imageUrl, user, recognitionMethod) {
+  const columns = await getTableColumns();
+  
+  const record = {
+    store_name: receiptData.store_name,
+    store_name_ru: receiptData.store_name_ru,
+    receipt_date: receiptData.receipt_date,
+    receipt_time: receiptData.receipt_time,
+    total_amount: receiptData.total_amount,
+    subtotal: receiptData.subtotal,
+    tax_amount: receiptData.tax_amount,
+    tax_rate: receiptData.tax_rate,
+    currency: receiptData.currency,
+    country: receiptData.country,
+    payment_method: receiptData.payment_method,
+    items: receiptData.items,
+    image_url: imageUrl,
+    raw_text: receiptData.raw_text,
+    document_type: receiptData.docType || 'receipt',
+    object: receiptData.object || 'other',
+    recognition_method: recognitionMethod,
+    recognized_at: new Date().toISOString(),
+    owner_id: user?.id || null,
+    owner_name: user?.name || null
+  };
+  
+  const filteredRecord = filterRecordByColumns(record, columns);
+  
   const { data, error } = await supabaseAdmin
     .from('receipts')
-    .insert([{
-      store_name: receiptData.store_name,
-      store_name_ru: receiptData.store_name_ru,
-      receipt_date: receiptData.receipt_date,
-      receipt_time: receiptData.receipt_time,
-      total_amount: receiptData.total_amount,
-      subtotal: receiptData.subtotal,
-      tax_amount: receiptData.tax_amount,
-      tax_rate: receiptData.tax_rate,
-      currency: receiptData.currency,
-      country: receiptData.country,
-      payment_method: receiptData.payment_method,
-      items: receiptData.items,
-      image_url: imageUrl,
-      raw_text: receiptData.raw_text,
-      document_type: receiptData.docType || 'receipt',
-      object: receiptData.object || 'other',
-      recognition_method: recognitionMethod,
-      recognized_at: new Date().toISOString(),
-      owner_id: user?.id || null,
-      owner_name: user?.name || null
-    }])
+    .insert([filteredRecord])
     .select()
     .single();
   
@@ -386,13 +453,9 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
     const docType = req.body.docType || 'receipt';
     const object = req.body.object || 'other';
     
-    // Process image
     const processedBuffer = await processImage(req.file.buffer);
-    
-    // Upload to storage
     const imageUrl = await uploadToStorage(processedBuffer, req.file.originalname, user.id);
     
-    // Recognize
     let receiptData;
     let recognitionMethod = model;
     let fallback = false;
@@ -481,25 +544,29 @@ app.post('/api/reprocess-receipt', requireAuth, async (req, res) => {
       receiptData = await recognizeWithGemini(buffer, 'gemini-1.5-flash', currency, docType);
     }
     
+    const columns = await getTableColumns();
+    const updateRecord = {
+      store_name: receiptData.store_name,
+      store_name_ru: receiptData.store_name_ru,
+      receipt_date: receiptData.receipt_date,
+      receipt_time: receiptData.receipt_time,
+      total_amount: receiptData.total_amount,
+      subtotal: receiptData.subtotal,
+      tax_amount: receiptData.tax_amount,
+      tax_rate: receiptData.tax_rate,
+      currency: receiptData.currency,
+      country: receiptData.country,
+      payment_method: receiptData.payment_method,
+      items: receiptData.items,
+      raw_text: receiptData.raw_text,
+      recognition_method: model,
+      recognized_at: new Date().toISOString()
+    };
+    const filteredUpdate = filterRecordByColumns(updateRecord, columns);
+    
     const { data, error } = await supabaseAdmin
       .from('receipts')
-      .update({
-        store_name: receiptData.store_name,
-        store_name_ru: receiptData.store_name_ru,
-        receipt_date: receiptData.receipt_date,
-        receipt_time: receiptData.receipt_time,
-        total_amount: receiptData.total_amount,
-        subtotal: receiptData.subtotal,
-        tax_amount: receiptData.tax_amount,
-        tax_rate: receiptData.tax_rate,
-        currency: receiptData.currency,
-        country: receiptData.country,
-        payment_method: receiptData.payment_method,
-        items: receiptData.items,
-        raw_text: receiptData.raw_text,
-        recognition_method: model,
-        recognized_at: new Date().toISOString()
-      })
+      .update(filteredUpdate)
       .eq('id', receiptId)
       .select()
       .single();
