@@ -10,17 +10,26 @@ const Groq = require('groq-sdk');
 const XLSX = require('xlsx');
 const fs = require('fs');
 const path = require('path');
+const ws = require('ws');
 require('dotenv').config();
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-// ========== SUPABASE ==========
+// ========== SUPABASE with WS transport ==========
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey || supabaseServiceKey);
-const supabaseAdmin = supabaseServiceKey ? createClient(supabaseUrl, supabaseServiceKey) : supabase;
+
+const supabaseOptions = {
+  auth: { persistSession: false },
+  realtime: { transport: ws }
+};
+
+const supabase = createClient(supabaseUrl, supabaseKey || supabaseServiceKey, supabaseOptions);
+const supabaseAdmin = supabaseServiceKey 
+  ? createClient(supabaseUrl, supabaseServiceKey, supabaseOptions) 
+  : supabase;
 
 const BUCKET_NAME = 'receipt-images';
 
@@ -263,7 +272,6 @@ function parseAIResponse(text) {
 
 function normalizeDate(dateStr) {
   if (!dateStr) return null;
-  // Try various formats
   const str = String(dateStr).trim();
   
   // ISO format
@@ -273,13 +281,6 @@ function normalizeDate(dateStr) {
   const ddmmyyyy = str.match(/^(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{4})$/);
   if (ddmmyyyy) {
     const [, d, m, y] = ddmmyyyy;
-    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-  }
-  
-  // MM/DD/YYYY
-  const mmddyyyy = str.match(/^(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{4})$/);
-  if (mmddyyyy && parseInt(mmddyyyy[1]) <= 12) {
-    const [, m, d, y] = mmddyyyy;
     return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
   }
   
@@ -307,7 +308,6 @@ function normalizeItems(items) {
 
 // ========== IMAGE PROCESSING ==========
 async function processImage(buffer) {
-  // Compress if needed
   const metadata = await sharp(buffer).metadata();
   let processed = buffer;
   
@@ -407,18 +407,15 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
         const engine = model.replace('ocrspace-', '');
         receiptData = await recognizeWithOCRSpace(processedBuffer, engine, currency, docType);
       } else {
-        // Default to Gemini
         receiptData = await recognizeWithGemini(processedBuffer, 'gemini-1.5-flash', currency, docType);
       }
     } catch (recognizeError) {
       console.error('Recognition error:', recognizeError);
-      // Fallback to Gemini
       try {
         receiptData = await recognizeWithGemini(processedBuffer, 'gemini-1.5-flash', currency, docType);
         recognitionMethod = `${model} (fallback → gemini-1.5-flash)`;
         fallback = true;
       } catch (fallbackError) {
-        // Last resort: save with raw text only
         receiptData = {
           store_name: null,
           store_name_ru: null,
@@ -438,11 +435,9 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
       }
     }
     
-    // Add metadata
     receiptData.docType = docType;
     receiptData.object = object;
     
-    // Save to DB
     const saved = await saveReceiptToDB(receiptData, imageUrl, user, recognitionMethod);
     
     res.json({
@@ -471,11 +466,9 @@ app.post('/api/reprocess-receipt', requireAuth, async (req, res) => {
     
     if (!receipt) return res.status(404).json({ error: 'Receipt not found' });
     
-    // Download image
     const imageRes = await axios.get(receipt.image_url, { responseType: 'arraybuffer' });
     const buffer = Buffer.from(imageRes.data);
     
-    // Re-recognize
     const currency = req.body.currency || 'auto';
     const docType = req.body.docType || 'receipt';
     
@@ -488,7 +481,6 @@ app.post('/api/reprocess-receipt', requireAuth, async (req, res) => {
       receiptData = await recognizeWithGemini(buffer, 'gemini-1.5-flash', currency, docType);
     }
     
-    // Update
     const { data, error } = await supabaseAdmin
       .from('receipts')
       .update({
@@ -525,7 +517,6 @@ app.get('/api/receipts', requireAuth, async (req, res) => {
     const user = req.user;
     let query = supabaseAdmin.from('receipts').select('*').order('created_at', { ascending: false });
     
-    // Non-admin users see only their own receipts
     if (user.role !== 'admin') {
       query = query.eq('owner_id', user.id);
     }
