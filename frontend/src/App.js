@@ -51,6 +51,21 @@ const FALLBACK_MODELS = [
   { name: 'groq-gemma', displayName: 'Groq Gemma', provider: 'Groq' },
 ];
 
+// Короткие имена Groq → реальные ID из API (для подсветки выбранной строки)
+const GROQ_ALIASES_FRONT = {
+  'groq-llama-4-scout': 'groq-meta-llama/llama-4-scout-17b-16e-instruct',
+  'groq-llama-4-maverick': 'groq-meta-llama/llama-4-maverick-17b-128e-instruct',
+  'groq-llama-3.2-90b': 'groq-llama-3.2-90b-vision-preview',
+  'groq-llama-3.2-11b': 'groq-llama-3.2-11b-vision-preview',
+  'groq-llama-3.3-70b': 'groq-llama-3.3-70b-versatile',
+  'groq-llama-3.1-8b': 'groq-llama-3.1-8b-instant',
+  'groq-mixtral': 'groq-mixtral-8x7b-32768',
+  'groq-gemma': 'groq-gemma2-9b-it'
+};
+
+const isModelSelected = (modelName, selectedModel) =>
+  modelName === selectedModel || GROQ_ALIASES_FRONT[selectedModel] === modelName;
+
 function compressImageFile(file, maxWidth = 1600, maxHeight = 2400, quality = 0.85) {
   return new Promise((resolve, reject) => {
     if (file.size <= MAX_FILE_SIZE_MB * 1024 * 1024) {
@@ -989,7 +1004,7 @@ function App() {
                     </thead>
                     <tbody>
                       {filteredModels.map(model => {
-                        const isSelected = selectedModel === model.name;
+                        const isSelected = isModelSelected(model.name, selectedModel);
                         const isActive = model.active === true;
                         const isUnknown = model.active === null || model.active === undefined;
                         const clickable = isActive || isUnknown;

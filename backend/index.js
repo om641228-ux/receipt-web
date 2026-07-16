@@ -194,9 +194,13 @@ function buildReceiptPrompt(currency, docType) {
 }
 
 // ========== AI RECOGNITION ==========
+// gemini-1.5-flash снят с поддержки на новых ключах (404) — используем 2.5
+const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_FALLBACK_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+
 async function recognizeWithGemini(imageBuffer, modelName, currency, docType) {
   if (!genAI) throw new Error('Gemini API key not configured');
-  const model = genAI.getGenerativeModel({ model: modelName || 'gemini-1.5-flash' });
+  const model = genAI.getGenerativeModel({ model: modelName || DEFAULT_GEMINI_MODEL });
   const prompt = buildReceiptPrompt(currency, docType);
   
   const result = await model.generateContent([
@@ -206,6 +210,21 @@ async function recognizeWithGemini(imageBuffer, modelName, currency, docType) {
   
   const text = result.response.text();
   return parseAIResponse(text);
+}
+
+// Gemini с автоподбором рабочей модели: перебирает кандидатов, пока одна не ответит
+async function recognizeWithGeminiAuto(imageBuffer, currency, docType) {
+  let lastError = null;
+  for (const candidate of GEMINI_FALLBACK_CANDIDATES) {
+    try {
+      const data = await recognizeWithGemini(imageBuffer, candidate, currency, docType);
+      return { data, model: candidate };
+    } catch (e) {
+      console.warn(`Gemini model ${candidate} failed: ${e.message}`);
+      lastError = e;
+    }
+  }
+  throw lastError || new Error('Все модели Gemini недоступны');
 }
 
 // Алиасы: короткие имена фронта → реальные ID моделей в Groq API
@@ -268,7 +287,8 @@ async function recognizeWithOCRSpace(imageBuffer, engine, currency, docType) {
   const parsed = res.data?.ParsedResults?.[0]?.ParsedText || '';
   if (!parsed) throw new Error('OCR.space returned empty text');
   
-  return recognizeWithGemini(imageBuffer, 'gemini-1.5-flash', currency, docType);
+  const { data } = await recognizeWithGeminiAuto(imageBuffer, currency, docType);
+  return data;
 }
 
 function parseAIResponse(text) {
@@ -506,7 +526,7 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
     
     if (!req.file) return res.status(400).json({ error: 'No image provided' });
     
-    const model = req.body.model || 'gemini-1.5-flash';
+    const model = req.body.model || DEFAULT_GEMINI_MODEL;
     const currency = req.body.currency || 'auto';
     const docType = req.body.docType || 'receipt';
     const object = req.body.object || 'other';
@@ -527,13 +547,16 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
         const engine = model.replace('ocrspace-', '');
         receiptData = await recognizeWithOCRSpace(processedBuffer, engine, currency, docType);
       } else {
-        receiptData = await recognizeWithGemini(processedBuffer, 'gemini-1.5-flash', currency, docType);
+        const auto = await recognizeWithGeminiAuto(processedBuffer, currency, docType);
+        receiptData = auto.data;
+        recognitionMethod = auto.model;
       }
     } catch (recognizeError) {
       console.error('Recognition error:', recognizeError);
       try {
-        receiptData = await recognizeWithGemini(processedBuffer, 'gemini-1.5-flash', currency, docType);
-        recognitionMethod = `${model} (fallback → gemini-1.5-flash)`;
+        const auto = await recognizeWithGeminiAuto(processedBuffer, currency, docType);
+        receiptData = auto.data;
+        recognitionMethod = `${model} (fallback → ${auto.model})`;
         fallback = true;
       } catch (fallbackError) {
         receiptData = {
@@ -598,7 +621,8 @@ app.post('/api/reprocess-receipt', requireAuth, async (req, res) => {
     } else if (model.startsWith('groq')) {
       receiptData = await recognizeWithGroq(buffer, model, currency, docType);
     } else {
-      receiptData = await recognizeWithGemini(buffer, 'gemini-1.5-flash', currency, docType);
+      const auto = await recognizeWithGeminiAuto(buffer, currency, docType);
+      receiptData = auto.data;
     }
     
     const columns = await getTableColumns();
@@ -802,7 +826,7 @@ function withTimeout(promise, ms) {
 
 function prettifyModelName(id) {
   return String(id).split('/').pop()
-    .replace(/[-_.]/g, ' ')
+    .replace(/[-_]/g, ' ')
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
@@ -932,9 +956,13 @@ app.get('/api/check-models', async (req, res) => {
       checkGroqModels().catch(() => []),
       checkOCRSpaceModels().catch(() => [])
     ]);
+    // Активные сверху, внутри — по имени
+    const sortModels = arr => [...arr].sort((a, b) =>
+      ((b.active === true) - (a.active === true)) || a.name.localeCompare(b.name)
+    );
     res.json({
       checked_at: new Date().toISOString(),
-      models: [...ocrModels, ...geminiModels, ...groqModels]
+      models: [...sortModels(ocrModels), ...sortModels(geminiModels), ...sortModels(groqModels)]
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
