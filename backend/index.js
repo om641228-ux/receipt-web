@@ -37,6 +37,34 @@ const BUCKET_NAME = 'receipt-images';
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
+// ========== OPENAI-COMPATIBLE PROVIDERS (OpenRouter / GitHub Models / Mistral) ==========
+const OPENAI_COMPAT_PROVIDERS = {
+  openrouter: {
+    displayName: 'OpenRouter',
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey: process.env.OPENROUTER_API_KEY || null,
+    defaultModel: 'google/gemma-4-31b-it:free',
+    fallbackIds: ['google/gemma-4-31b-it:free', 'qwen/qwen2.5-vl-32b-instruct:free', 'qwen/qwen2.5-vl-72b-instruct:free'],
+    extraHeaders: { 'HTTP-Referer': 'https://receipt-manager', 'X-Title': 'Receipt Manager' }
+  },
+  github: {
+    displayName: 'GitHub',
+    baseURL: 'https://models.github.ai/inference',
+    apiKey: process.env.GITHUB_TOKEN || process.env.GITHUB_API_KEY || null,
+    defaultModel: 'openai/gpt-4o-mini',
+    fallbackIds: ['openai/gpt-4o-mini', 'openai/gpt-4o', 'meta/Llama-4-Scout-17B-16E-Instruct', 'mistral-ai/Mistral-Small-3.1-24B-Instruct-2503'],
+    extraHeaders: {}
+  },
+  mistral: {
+    displayName: 'Mistral',
+    baseURL: 'https://api.mistral.ai/v1',
+    apiKey: process.env.MISTRAL_API_KEY || null,
+    defaultModel: 'pixtral-12b-2409',
+    fallbackIds: ['pixtral-12b-2409', 'mistral-small-latest'],
+    extraHeaders: {}
+  }
+};
+
 // ========== AUTH ==========
 const USERS = {
   'admin': { id: 'admin', name: 'Администратор', role: 'admin' },
@@ -227,6 +255,64 @@ async function recognizeWithGeminiAuto(imageBuffer, currency, docType) {
   throw lastError || new Error('Все модели Gemini недоступны');
 }
 
+// ========== УНИВЕРСАЛЬНОЕ РАСПОЗНАВАНИЕ (OpenAI-совместимые: OpenRouter/GitHub/Mistral) ==========
+async function recognizeWithOpenAICompat(imageBuffer, modelName, currency, docType, providerKey) {
+  const cfg = OPENAI_COMPAT_PROVIDERS[providerKey];
+  if (!cfg) throw new Error(`Unknown provider: ${providerKey}`);
+  if (!cfg.apiKey) throw new Error(`${cfg.displayName} API key not configured`);
+  const base64 = imageBuffer.toString('base64');
+  const prompt = buildReceiptPrompt(currency, docType);
+
+  const res = await axios.post(`${cfg.baseURL}/chat/completions`, {
+    model: modelName || cfg.defaultModel,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
+        ]
+      }
+    ],
+    max_tokens: 4096,
+    temperature: 0.1
+  }, {
+    headers: {
+      'Authorization': `Bearer ${cfg.apiKey}`,
+      'Content-Type': 'application/json',
+      ...cfg.extraHeaders
+    },
+    timeout: 120000
+  });
+
+  const content = res.data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error(`${cfg.displayName} returned empty response`);
+  return parseAIResponse(content);
+}
+
+// ========== ОБЩАЯ ЦЕПОЧКА FALLBACK: Gemini → OpenRouter → GitHub → Mistral ==========
+async function recognizeWithFallback(imageBuffer, currency, docType) {
+  const errors = [];
+  try {
+    const auto = await recognizeWithGeminiAuto(imageBuffer, currency, docType);
+    return { data: auto.data, model: auto.model };
+  } catch (e) {
+    errors.push(`gemini: ${e.message}`);
+  }
+  for (const key of ['openrouter', 'github', 'mistral']) {
+    const cfg = OPENAI_COMPAT_PROVIDERS[key];
+    if (!cfg.apiKey) { errors.push(`${key}: нет API ключа`); continue; }
+    try {
+      const data = await recognizeWithOpenAICompat(imageBuffer, cfg.defaultModel, currency, docType, key);
+      return { data, model: `${key}-${cfg.defaultModel}` };
+    } catch (e) {
+      console.warn(`Fallback ${key} failed: ${e.message}`);
+      errors.push(`${key}: ${e.message}`);
+    }
+  }
+  throw new Error(errors.join(' | ') || 'Нет доступных провайдеров распознавания');
+}
+
 // Алиасы: короткие имена фронта → реальные ID моделей в Groq API
 const GROQ_ALIASES = {
   'llama-4-scout': 'meta-llama/llama-4-scout-17b-16e-instruct',
@@ -287,7 +373,7 @@ async function recognizeWithOCRSpace(imageBuffer, engine, currency, docType) {
   const parsed = res.data?.ParsedResults?.[0]?.ParsedText || '';
   if (!parsed) throw new Error('OCR.space returned empty text');
   
-  const { data } = await recognizeWithGeminiAuto(imageBuffer, currency, docType);
+  const { data } = await recognizeWithFallback(imageBuffer, currency, docType);
   return data;
 }
 
@@ -546,15 +632,21 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
       } else if (model.startsWith('ocrspace')) {
         const engine = model.replace('ocrspace-', '');
         receiptData = await recognizeWithOCRSpace(processedBuffer, engine, currency, docType);
+      } else if (model.startsWith('openrouter-')) {
+        receiptData = await recognizeWithOpenAICompat(processedBuffer, model.replace(/^openrouter-/, ''), currency, docType, 'openrouter');
+      } else if (model.startsWith('github-')) {
+        receiptData = await recognizeWithOpenAICompat(processedBuffer, model.replace(/^github-/, ''), currency, docType, 'github');
+      } else if (model.startsWith('mistral-')) {
+        receiptData = await recognizeWithOpenAICompat(processedBuffer, model.replace(/^mistral-/, ''), currency, docType, 'mistral');
       } else {
-        const auto = await recognizeWithGeminiAuto(processedBuffer, currency, docType);
+        const auto = await recognizeWithFallback(processedBuffer, currency, docType);
         receiptData = auto.data;
         recognitionMethod = auto.model;
       }
     } catch (recognizeError) {
       console.error('Recognition error:', recognizeError);
       try {
-        const auto = await recognizeWithGeminiAuto(processedBuffer, currency, docType);
+        const auto = await recognizeWithFallback(processedBuffer, currency, docType);
         receiptData = auto.data;
         recognitionMethod = `${model} (fallback → ${auto.model})`;
         fallback = true;
@@ -620,8 +712,14 @@ app.post('/api/reprocess-receipt', requireAuth, async (req, res) => {
       receiptData = await recognizeWithGemini(buffer, model, currency, docType);
     } else if (model.startsWith('groq')) {
       receiptData = await recognizeWithGroq(buffer, model, currency, docType);
+    } else if (model.startsWith('openrouter-')) {
+      receiptData = await recognizeWithOpenAICompat(buffer, model.replace(/^openrouter-/, ''), currency, docType, 'openrouter');
+    } else if (model.startsWith('github-')) {
+      receiptData = await recognizeWithOpenAICompat(buffer, model.replace(/^github-/, ''), currency, docType, 'github');
+    } else if (model.startsWith('mistral-')) {
+      receiptData = await recognizeWithOpenAICompat(buffer, model.replace(/^mistral-/, ''), currency, docType, 'mistral');
     } else {
-      const auto = await recognizeWithGeminiAuto(buffer, currency, docType);
+      const auto = await recognizeWithFallback(buffer, currency, docType);
       receiptData = auto.data;
     }
     
@@ -949,12 +1047,84 @@ async function checkOCRSpaceModels() {
   });
 }
 
+// ========== CHECK: OpenAI-совместимые провайдеры (vision-пинг тестовой картинкой) ==========
+async function listOpenAICompatModels(key) {
+  const cfg = OPENAI_COMPAT_PROVIDERS[key];
+  try {
+    const res = await axios.get(`${cfg.baseURL}/models`, {
+      headers: { 'Authorization': `Bearer ${cfg.apiKey}`, ...cfg.extraHeaders },
+      timeout: 15000
+    });
+    const data = res.data?.data || [];
+    if (key === 'openrouter') {
+      const free = data
+        .filter(m => (m.architecture?.modality || '').includes('image') && m.id.endsWith(':free'))
+        .map(m => m.id);
+      return free.length ? free : cfg.fallbackIds;
+    }
+    if (key === 'mistral') {
+      const vis = data.filter(m => m.capabilities?.vision === true).map(m => m.id);
+      return vis.length ? vis : cfg.fallbackIds;
+    }
+    // github: OpenAI-стиль списка, фильтруем по известным vision-моделям
+    const vis = data.map(m => m.id).filter(id => /4o|4\.1|vision|llama-4|multimodal|pixtral|mistral-small|grok/i.test(id));
+    return vis.length ? vis : cfg.fallbackIds;
+  } catch (e) {
+    console.warn(`${key} models list failed: ${e.message}`);
+    return cfg.fallbackIds;
+  }
+}
+
+async function checkOpenAICompatProvider(key) {
+  const cfg = OPENAI_COMPAT_PROVIDERS[key];
+  const provider = cfg.displayName;
+  const ids = await listOpenAICompatModels(key);
+
+  if (!cfg.apiKey) {
+    return ids.map(id => ({
+      name: `${key}-${id}`, displayName: prettifyModelName(id.replace(':free', ' (Free)')), provider,
+      active: false, ms: null, error: `${provider} API key не задан`
+    }));
+  }
+
+  let tinyB64 = null;
+  try {
+    tinyB64 = (await sharp({ create: { width: 80, height: 30, channels: 3, background: '#ffffff' } }).jpeg({ quality: 70 }).toBuffer()).toString('base64');
+  } catch (e) {}
+
+  return mapWithConcurrency(ids.slice(0, 10), 3, async (id) => {
+    const t0 = Date.now();
+    const displayName = prettifyModelName(id.replace(':free', ' (Free)'));
+    try {
+      const content = [
+        { type: 'text', text: 'Describe this image in one word.' }
+      ];
+      if (tinyB64) content.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${tinyB64}` } });
+      await withTimeout(axios.post(`${cfg.baseURL}/chat/completions`, {
+        model: id,
+        messages: [{ role: 'user', content }],
+        max_tokens: 8
+      }, {
+        headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json', ...cfg.extraHeaders },
+        timeout: 25000
+      }), 30000);
+      return { name: `${key}-${id}`, displayName, provider, active: true, ms: Date.now() - t0, error: null };
+    } catch (e) {
+      const msg = e.response?.data?.error?.message || e.message || 'error';
+      return { name: `${key}-${id}`, displayName, provider, active: false, ms: null, error: String(msg).slice(0, 120) };
+    }
+  });
+}
+
 app.get('/api/check-models', async (req, res) => {
   try {
-    const [geminiModels, groqModels, ocrModels] = await Promise.all([
+    const [geminiModels, groqModels, ocrModels, openrouterModels, githubModels, mistralModels] = await Promise.all([
       checkGeminiModels().catch(() => []),
       checkGroqModels().catch(() => []),
-      checkOCRSpaceModels().catch(() => [])
+      checkOCRSpaceModels().catch(() => []),
+      checkOpenAICompatProvider('openrouter').catch(() => []),
+      checkOpenAICompatProvider('github').catch(() => []),
+      checkOpenAICompatProvider('mistral').catch(() => [])
     ]);
     // Активные сверху, внутри — по имени
     const sortModels = arr => [...arr].sort((a, b) =>
@@ -962,7 +1132,14 @@ app.get('/api/check-models', async (req, res) => {
     );
     res.json({
       checked_at: new Date().toISOString(),
-      models: [...sortModels(ocrModels), ...sortModels(geminiModels), ...sortModels(groqModels)]
+      models: [
+        ...sortModels(ocrModels),
+        ...sortModels(geminiModels),
+        ...sortModels(groqModels),
+        ...sortModels(openrouterModels),
+        ...sortModels(githubModels),
+        ...sortModels(mistralModels)
+      ]
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

@@ -49,6 +49,15 @@ const FALLBACK_MODELS = [
   { name: 'groq-qwen3-32b', displayName: 'Groq Qwen3 32B', provider: 'Groq' },
   { name: 'groq-mixtral', displayName: 'Groq Mixtral', provider: 'Groq' },
   { name: 'groq-gemma', displayName: 'Groq Gemma', provider: 'Groq' },
+  { name: 'openrouter-google/gemma-4-31b-it:free', displayName: 'Gemma 4 31B (Free)', provider: 'OpenRouter' },
+  { name: 'openrouter-qwen/qwen2.5-vl-32b-instruct:free', displayName: 'Qwen 2.5 VL 32B (Free)', provider: 'OpenRouter' },
+  { name: 'openrouter-qwen/qwen2.5-vl-72b-instruct:free', displayName: 'Qwen 2.5 VL 72B (Free)', provider: 'OpenRouter' },
+  { name: 'github-openai/gpt-4o-mini', displayName: 'GPT-4o mini (GitHub)', provider: 'GitHub' },
+  { name: 'github-openai/gpt-4o', displayName: 'GPT-4o (GitHub)', provider: 'GitHub' },
+  { name: 'github-meta/Llama-4-Scout-17B-16E-Instruct', displayName: 'Llama 4 Scout (GitHub)', provider: 'GitHub' },
+  { name: 'github-mistral-ai/Mistral-Small-3.1-24B-Instruct-2503', displayName: 'Mistral Small 3.1 (GitHub)', provider: 'GitHub' },
+  { name: 'mistral-pixtral-12b-2409', displayName: 'Pixtral 12B', provider: 'Mistral' },
+  { name: 'mistral-mistral-small-latest', displayName: 'Mistral Small Latest', provider: 'Mistral' },
 ];
 
 // Короткие имена Groq → реальные ID из API (для подсветки выбранной строки)
@@ -813,7 +822,14 @@ function App() {
   };
 
   const getProviderColor = (provider) => {
-    const colors = { 'Gemini': '#4285f4', 'Groq': '#f55036', 'OCR.space': '#00a86b' };
+    const colors = {
+      'Gemini': '#4285f4',
+      'Groq': '#f55036',
+      'OCR.space': '#00a86b',
+      'OpenRouter': '#6366f1',
+      'GitHub': '#24292f',
+      'Mistral': '#ff7000'
+    };
     return colors[provider] || '#888';
   };
 
