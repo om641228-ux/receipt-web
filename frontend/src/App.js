@@ -451,7 +451,7 @@ function App() {
       formData.append('token', token);
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60000);
+      const timeout = setTimeout(() => controller.abort(), 180000);
       const res = await fetch(`${API_URL}/api/upload-receipt?token=${token}`, { 
         method: 'POST', 
         body: formData,

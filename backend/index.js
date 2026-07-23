@@ -271,9 +271,10 @@ async function recognizeWithOpenAICompat(imageBuffer, modelName, currency, docTy
   if (!cfg.apiKey) throw new Error(`${cfg.displayName} API key not configured`);
   const base64 = imageBuffer.toString('base64');
   const prompt = buildReceiptPrompt(currency, docType);
+  const model = modelName || cfg.defaultModel;
 
-  const res = await axios.post(`${cfg.baseURL}/chat/completions`, {
-    model: modelName || cfg.defaultModel,
+  const body = {
+    model,
     messages: [
       {
         role: 'user',
@@ -285,17 +286,35 @@ async function recognizeWithOpenAICompat(imageBuffer, modelName, currency, docTy
     ],
     max_tokens: 4096,
     temperature: 0.1
-  }, {
+  };
+
+  // Kimi (Moonshot): температура жёстко зафиксирована — передача значения = ошибка 400.
+  // Думающим моделям нужен большой лимит: reasoning_content + content ≤ max_tokens.
+  if (providerKey === 'kimi') {
+    delete body.temperature;
+    if (/kimi-k3/i.test(model)) {
+      delete body.max_tokens; // deprecated для K3
+      body.max_completion_tokens = 16384;
+      body.reasoning_effort = 'low'; // для OCR достаточно — быстрее и дешевле
+    } else {
+      body.max_tokens = 16384;
+    }
+  }
+
+  const res = await axios.post(`${cfg.baseURL}/chat/completions`, body, {
     headers: {
       'Authorization': `Bearer ${cfg.apiKey}`,
       'Content-Type': 'application/json',
       ...cfg.extraHeaders
     },
-    timeout: 120000
+    timeout: 180000
   });
 
   const content = res.data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error(`${cfg.displayName} returned empty response`);
+  if (!content) {
+    const finish = res.data?.choices?.[0]?.finish_reason;
+    throw new Error(`${cfg.displayName} вернул пустой ответ (finish_reason: ${finish || 'unknown'})`);
+  }
   return parseAIResponse(content);
 }
 
@@ -632,6 +651,7 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
     let receiptData;
     let recognitionMethod = model;
     let fallback = false;
+    let recognizeErrorMsg = null;
     
     try {
       if (model.startsWith('gemini')) {
@@ -656,6 +676,7 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
       }
     } catch (recognizeError) {
       console.error('Recognition error:', recognizeError);
+      recognizeErrorMsg = recognizeError.response?.data?.error?.message || recognizeError.message;
       try {
         const auto = await recognizeWithFallback(processedBuffer, currency, docType);
         receiptData = auto.data;
@@ -691,7 +712,9 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
       id: saved.id,
       ...saved,
       image_url: imageUrl,
-      warning: fallback ? 'Распознавание выполнено через fallback модель' : null
+      warning: fallback
+        ? `Распознавание выполнено через fallback модель. Причина: ${String(recognizeErrorMsg || 'неизвестно').slice(0, 200)}`
+        : null
     });
     
   } catch (e) {
@@ -1131,8 +1154,16 @@ async function checkOpenAICompatProvider(key) {
       }), 30000);
       return { name: `${key}-${id}`, displayName, provider, active: true, ms: Date.now() - t0, error: null };
     } catch (e) {
-      const msg = e.response?.data?.error?.message || e.message || 'error';
-      return { name: `${key}-${id}`, displayName, provider, active: false, ms: null, error: String(msg).slice(0, 120) };
+      let msg = String(e.response?.data?.error?.message || e.message || 'error');
+      // Человекочитаемые подсказки для типовых ошибок
+      if (/suspended due to insufficient balance/i.test(msg)) {
+        msg = `Недостаточно средств: пополните баланс на platform.moonshot.ai (Billing → Recharge)`;
+      } else if (/requires terms acceptance/i.test(msg)) {
+        msg = `Требуется принять условия модели в консоли провайдера`;
+      } else if (/invalid api key|incorrect api key|unauthorized/i.test(msg)) {
+        msg = `Неверный API ключ ${provider} — проверьте переменную в Railway`;
+      }
+      return { name: `${key}-${id}`, displayName, provider, active: false, ms: null, error: msg.slice(0, 140) };
     }
   });
 }
