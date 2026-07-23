@@ -43,8 +43,8 @@ const OPENAI_COMPAT_PROVIDERS = {
     displayName: 'OpenRouter',
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey: process.env.OPENROUTER_API_KEY || null,
-    defaultModel: 'google/gemma-4-31b-it:free',
-    fallbackIds: ['google/gemma-4-31b-it:free', 'qwen/qwen2.5-vl-32b-instruct:free', 'qwen/qwen2.5-vl-72b-instruct:free'],
+    defaultModel: 'google/gemma-4-26b-a4b-it:free',
+    fallbackIds: ['google/gemma-4-26b-a4b-it:free', 'qwen/qwen2.5-vl-32b-instruct:free', 'qwen/qwen2.5-vl-72b-instruct:free', 'google/gemma-4-31b-it:free'],
     extraHeaders: { 'HTTP-Referer': 'https://receipt-manager', 'X-Title': 'Receipt Manager' }
   },
   github: {
@@ -52,15 +52,15 @@ const OPENAI_COMPAT_PROVIDERS = {
     baseURL: 'https://models.github.ai/inference',
     apiKey: process.env.GITHUB_TOKEN || process.env.GITHUB_API_KEY || null,
     defaultModel: 'openai/gpt-4o-mini',
-    fallbackIds: ['openai/gpt-4o-mini', 'openai/gpt-4o', 'meta/Llama-4-Scout-17B-16E-Instruct', 'mistral-ai/Mistral-Small-3.1-24B-Instruct-2503'],
+    fallbackIds: ['openai/gpt-4o-mini', 'openai/gpt-4o', 'meta/Llama-4-Scout-17B-16E-Instruct'],
     extraHeaders: {}
   },
   mistral: {
     displayName: 'Mistral',
     baseURL: 'https://api.mistral.ai/v1',
     apiKey: process.env.MISTRAL_API_KEY || null,
-    defaultModel: 'pixtral-12b-2409',
-    fallbackIds: ['pixtral-12b-2409', 'mistral-small-latest'],
+    defaultModel: 'mistral-small-latest',
+    fallbackIds: ['mistral-small-latest', 'pixtral-12b-2409'],
     extraHeaders: {}
   },
   kimi: {
