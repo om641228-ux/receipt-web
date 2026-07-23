@@ -100,7 +100,7 @@ async function convertPdfToImages(pdfFile) {
     canvas.height = viewport.height;
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
     const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.9));
-    if (blob) out.push(new File([blob], `${baseName}_стр${p}.jpg`, { type: 'image/jpeg' }));
+    if (blob) out.push(new File([blob], `${baseName}_p${p}.jpg`, { type: 'image/jpeg' }));
   }
   console.log(`PDF "${pdfFile.name}": ${out.length} стр. конвертировано`);
   return out;

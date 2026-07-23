@@ -511,9 +511,24 @@ async function processImage(buffer) {
 }
 
 // ========== UPLOAD TO STORAGE ==========
+// Supabase Storage принимает в ключах только латиницу — чистим Ñ, кириллицу, пробелы
+function sanitizeFilename(name, contentType) {
+  const m = String(name || '').match(/\.[^.]+$/);
+  const ext = m ? m[0].toLowerCase() : '';
+  const base = String(name || 'file')
+    .replace(/\.[^.]+$/, '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // Ñ→N, á→a
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'file';
+  const finalExt = ext || (contentType === 'application/pdf' ? '.pdf' : '.jpg');
+  return base + finalExt;
+}
+
 async function uploadToStorage(buffer, filename, userId, contentType = 'image/jpeg') {
   const folder = userId || 'anonymous';
-  const path = `${folder}/${Date.now()}_${filename}`;
+  const safeName = sanitizeFilename(filename, contentType);
+  const path = `${folder}/${Date.now()}_${safeName}`;
   
   const { data, error } = await supabaseAdmin.storage
     .from(BUCKET_NAME)
