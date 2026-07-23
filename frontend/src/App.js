@@ -63,6 +63,67 @@ const FALLBACK_MODELS = [
   { name: 'kimi-moonshot-v1-128k-vision-preview', displayName: 'Kimi Vision 128K (legacy)', provider: 'Kimi' },
 ];
 
+// ========== PDF SUPPORT: конвертация страниц PDF в изображения (pdf.js по CDN) ==========
+let pdfjsLoading = null;
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (pdfjsLoading) return pdfjsLoading;
+  pdfjsLoading = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve(window.pdfjsLib);
+    };
+    script.onerror = () => reject(new Error('Не удалось загрузить PDF.js — проверьте интернет'));
+    document.head.appendChild(script);
+  });
+  return pdfjsLoading;
+}
+
+const isPdfFile = (f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+const isPdfUrl = (url) => /\.pdf(\?|$)/i.test(url || '');
+
+async function convertPdfToImages(pdfFile) {
+  const pdfjsLib = await loadPdfJs();
+  const data = await pdfFile.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const baseName = (pdfFile.name || 'document').replace(/\.pdf$/i, '');
+  const out = [];
+  const maxPages = Math.min(pdf.numPages, 10);
+  for (let p = 1; p <= maxPages; p++) {
+    const page = await pdf.getPage(p);
+    const viewport = page.getViewport({ scale: 2.0 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.9));
+    if (blob) out.push(new File([blob], `${baseName}_стр${p}.jpg`, { type: 'image/jpeg' }));
+  }
+  console.log(`PDF "${pdfFile.name}": ${out.length} стр. конвертировано`);
+  return out;
+}
+
+// PDF превращаем в изображения страниц — дальше работают ВСЕ модели распознавания
+async function expandFilesWithPdf(files) {
+  const result = [];
+  for (const f of files) {
+    if (isPdfFile(f)) {
+      try {
+        result.push(...await convertPdfToImages(f));
+      } catch (e) {
+        console.error('PDF convert error:', e);
+        alert(`Не удалось прочитать PDF «${f.name}»: ${e.message}`);
+      }
+    } else {
+      result.push(f);
+    }
+  }
+  return result;
+}
+
 // Короткие имена Groq → реальные ID из API (для подсветки выбранной строки)
 const GROQ_ALIASES_FRONT = {
   'groq-llama-4-scout': 'groq-meta-llama/llama-4-scout-17b-16e-instruct',
@@ -386,9 +447,11 @@ function App() {
     }
   }, [token, loadReceipts, logout]);
 
-  const handleFileSelect = (e) => {
-    const files = Array.from(e.target.files).filter(f => f.type.startsWith('image/'));
-    if (files.length > 0) {
+  const handleFileSelect = async (e) => {
+    const picked = Array.from(e.target.files).filter(f => f.type.startsWith('image/') || isPdfFile(f));
+    if (picked.length > 0) {
+      const files = await expandFilesWithPdf(picked);
+      if (!files.length) return;
       previewUrls.forEach(url => URL.revokeObjectURL(url));
       const urls = files.map(f => URL.createObjectURL(f));
       setSelectedFiles(files);
@@ -400,10 +463,12 @@ function App() {
     }
   };
 
-  const handleDrop = (e) => {
+  const handleDrop = async (e) => {
     e.preventDefault();
-    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
-    if (files.length > 0) {
+    const picked = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/') || isPdfFile(f));
+    if (picked.length > 0) {
+      const files = await expandFilesWithPdf(picked);
+      if (!files.length) return;
       previewUrls.forEach(url => URL.revokeObjectURL(url));
       const urls = files.map(f => URL.createObjectURL(f));
       setSelectedFiles(files);
@@ -501,11 +566,13 @@ function App() {
   };
 
   const handleFolderSelect = async (e) => {
-    const allFiles = Array.from(e.target.files).filter(f => f.type.startsWith('image/'));
-    if (allFiles.length === 0) {
-      alert('В папке не найдено изображений');
+    const picked = Array.from(e.target.files).filter(f => f.type.startsWith('image/') || isPdfFile(f));
+    if (picked.length === 0) {
+      alert('В папке не найдено изображений или PDF');
       return;
     }
+    const allFiles = await expandFilesWithPdf(picked);
+    if (allFiles.length === 0) return;
     setFolderProgress({ active: true, current: 0, total: allFiles.length, success: 0, errors: 0, currentFile: '' });
     setFolderResults([]);
     setRecognizing(true);
@@ -1107,7 +1174,11 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="modal-image-section">
-                {(viewModal.photo_url || viewModal.image_url) ? <img src={fixImageUrl(viewModal.photo_url || viewModal.image_url)} alt="Чек" className="modal-image" /> : <div className="no-image">Нет фото</div>}
+                {(viewModal.photo_url || viewModal.image_url) ? (
+                  isPdfUrl(viewModal.photo_url || viewModal.image_url)
+                    ? <div className="no-image">📄 PDF-документ</div>
+                    : <img src={fixImageUrl(viewModal.photo_url || viewModal.image_url)} alt="Чек" className="modal-image" />
+                ) : <div className="no-image">Нет фото</div>}
               </div>
               <div className="modal-info">
                 <div className="info-block">
@@ -1210,8 +1281,8 @@ function App() {
             </div>
           </div>
 
-          <input type="file" accept="image/*" multiple onChange={handleFileSelect} id="file-input" style={{ display: 'none' }} />
-          <input type="file" id="folder-input" webkitdirectory="" directory="" multiple accept="image/*" onChange={handleFolderSelect} style={{ display: 'none' }} />
+          <input type="file" accept="image/*,application/pdf" multiple onChange={handleFileSelect} id="file-input" style={{ display: 'none' }} />
+          <input type="file" id="folder-input" webkitdirectory="" directory="" multiple accept="image/*,application/pdf" onChange={handleFolderSelect} style={{ display: 'none' }} />
 
           <div className="recognize-bar">
             <button className="recognize-main-btn" onClick={() => recognizeAndSave()} disabled={!selectedFiles.length || recognizing}>
@@ -1221,7 +1292,7 @@ function App() {
 
           <div className="upload-layout">
             <div className="drop-zone" onDrop={handleDrop} onDragOver={e => e.preventDefault()}>
-              <input type="file" accept="image/*" multiple onChange={handleFileSelect} id="file-input-hidden" style={{ display: 'none' }} />
+              <input type="file" accept="image/*,application/pdf" multiple onChange={handleFileSelect} id="file-input-hidden" style={{ display: 'none' }} />
               <label htmlFor="file-input" style={{ display: 'block', width: '100%', cursor: 'pointer' }}>
                 {previewUrl ? (
                   <div className="preview-container">
@@ -1258,7 +1329,11 @@ function App() {
                 </div>
                 <div className="result-panel-body">
                   <div className="result-image">
-                    {(lastSavedReceipt.photo_url || lastSavedReceipt.image_url) ? <img src={fixImageUrl(lastSavedReceipt.photo_url || lastSavedReceipt.image_url)} alt="Чек" /> : <div className="no-image-thumb">Нет фото</div>}
+                    {(lastSavedReceipt.photo_url || lastSavedReceipt.image_url) ? (
+                      isPdfUrl(lastSavedReceipt.photo_url || lastSavedReceipt.image_url)
+                        ? <div className="no-image-thumb">📄 PDF</div>
+                        : <img src={fixImageUrl(lastSavedReceipt.photo_url || lastSavedReceipt.image_url)} alt="Чек" />
+                    ) : <div className="no-image-thumb">Нет фото</div>}
                   </div>
                   <div className="result-info">
                     <p><strong>ID:</strong> {lastSavedReceipt.id}</p>
@@ -1453,7 +1528,11 @@ function App() {
                         <HighlightText text={formatOwnerName(receipt)} query={searchQuery} />
                       </p>
                       {(receipt.photo_url || receipt.image_url) ? (
-                        <img src={fixImageUrl(receipt.photo_url || receipt.image_url)} alt="Чек" className="receipt-thumb" onError={(e) => { e.target.style.display = 'none'; }} />
+                        isPdfUrl(receipt.photo_url || receipt.image_url) ? (
+                          <div className="no-image-thumb">📄 PDF</div>
+                        ) : (
+                          <img src={fixImageUrl(receipt.photo_url || receipt.image_url)} alt="Чек" className="receipt-thumb" onError={(e) => { e.target.style.display = 'none'; }} />
+                        )
                       ) : (
                         <div className="no-image-thumb"> Чек</div>
                       )}

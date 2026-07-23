@@ -235,13 +235,13 @@ function buildReceiptPrompt(currency, docType) {
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_FALLBACK_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 
-async function recognizeWithGemini(imageBuffer, modelName, currency, docType) {
+async function recognizeWithGemini(imageBuffer, modelName, currency, docType, mimeType = 'image/jpeg') {
   if (!genAI) throw new Error('Gemini API key not configured');
   const model = genAI.getGenerativeModel({ model: modelName || DEFAULT_GEMINI_MODEL });
   const prompt = buildReceiptPrompt(currency, docType);
   
   const result = await model.generateContent([
-    { inlineData: { data: imageBuffer.toString('base64'), mimeType: 'image/jpeg' } },
+    { inlineData: { data: imageBuffer.toString('base64'), mimeType } },
     prompt
   ]);
   
@@ -250,11 +250,11 @@ async function recognizeWithGemini(imageBuffer, modelName, currency, docType) {
 }
 
 // Gemini с автоподбором рабочей модели: перебирает кандидатов, пока одна не ответит
-async function recognizeWithGeminiAuto(imageBuffer, currency, docType) {
+async function recognizeWithGeminiAuto(imageBuffer, currency, docType, mimeType = 'image/jpeg') {
   let lastError = null;
   for (const candidate of GEMINI_FALLBACK_CANDIDATES) {
     try {
-      const data = await recognizeWithGemini(imageBuffer, candidate, currency, docType);
+      const data = await recognizeWithGemini(imageBuffer, candidate, currency, docType, mimeType);
       return { data, model: candidate };
     } catch (e) {
       console.warn(`Gemini model ${candidate} failed: ${e.message}`);
@@ -318,14 +318,18 @@ async function recognizeWithOpenAICompat(imageBuffer, modelName, currency, docTy
   return parseAIResponse(content);
 }
 
-// ========== ОБЩАЯ ЦЕПОЧКА FALLBACK: Gemini → OpenRouter → GitHub → Mistral ==========
-async function recognizeWithFallback(imageBuffer, currency, docType) {
+// ========== ОБЩАЯ ЦЕПОЧКА FALLBACK: Gemini → OpenRouter → GitHub → Mistral → Kimi ==========
+async function recognizeWithFallback(imageBuffer, currency, docType, mimeType = 'image/jpeg') {
   const errors = [];
   try {
-    const auto = await recognizeWithGeminiAuto(imageBuffer, currency, docType);
+    const auto = await recognizeWithGeminiAuto(imageBuffer, currency, docType, mimeType);
     return { data: auto.data, model: auto.model };
   } catch (e) {
     errors.push(`gemini: ${e.message}`);
+  }
+  // PDF нативно поддерживает только Gemini — остальные провайдеры пропускаем
+  if (mimeType === 'application/pdf') {
+    throw new Error(errors.join(' | ') || 'PDF: Gemini недоступен');
   }
   for (const key of ['openrouter', 'github', 'mistral', 'kimi']) {
     const cfg = OPENAI_COMPAT_PROVIDERS[key];
@@ -381,15 +385,16 @@ async function recognizeWithGroq(imageBuffer, modelName, currency, docType) {
   return parseAIResponse(response.choices[0].message.content);
 }
 
-async function recognizeWithOCRSpace(imageBuffer, engine, currency, docType) {
+async function recognizeWithOCRSpace(imageBuffer, engine, currency, docType, mimeType = 'image/jpeg') {
   const apiKey = process.env.OCRSPACE_API_KEY;
   if (!apiKey) throw new Error('OCR.space API key not configured');
   
+  const isPdf = mimeType === 'application/pdf';
   const form = new FormData();
   form.append('apikey', apiKey);
   form.append('language', 'eng');
   form.append('isOverlayRequired', 'false');
-  form.append('file', imageBuffer, { filename: 'receipt.jpg', contentType: 'image/jpeg' });
+  form.append('file', imageBuffer, { filename: isPdf ? 'receipt.pdf' : 'receipt.jpg', contentType: mimeType });
   form.append('scale', 'true');
   form.append('OCREngine', engine === 'engine2' ? '2' : engine === 'engine3' ? '3' : '1');
   
@@ -401,7 +406,7 @@ async function recognizeWithOCRSpace(imageBuffer, engine, currency, docType) {
   const parsed = res.data?.ParsedResults?.[0]?.ParsedText || '';
   if (!parsed) throw new Error('OCR.space returned empty text');
   
-  const { data } = await recognizeWithFallback(imageBuffer, currency, docType);
+  const { data } = await recognizeWithFallback(imageBuffer, currency, docType, mimeType);
   return data;
 }
 
@@ -506,13 +511,13 @@ async function processImage(buffer) {
 }
 
 // ========== UPLOAD TO STORAGE ==========
-async function uploadToStorage(buffer, filename, userId) {
+async function uploadToStorage(buffer, filename, userId, contentType = 'image/jpeg') {
   const folder = userId || 'anonymous';
   const path = `${folder}/${Date.now()}_${filename}`;
   
   const { data, error } = await supabaseAdmin.storage
     .from(BUCKET_NAME)
-    .upload(path, buffer, { contentType: 'image/jpeg', upsert: false });
+    .upload(path, buffer, { contentType, upsert: false });
   
   if (error) throw error;
   
@@ -645,8 +650,10 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
     const docType = req.body.docType || 'receipt';
     const object = req.body.object || 'other';
     
-    const processedBuffer = await processImage(req.file.buffer);
-    const imageUrl = await uploadToStorage(processedBuffer, req.file.originalname, user.id);
+    const isPdf = req.file.mimetype === 'application/pdf' || /\.pdf$/i.test(req.file.originalname || '');
+    const mimeType = isPdf ? 'application/pdf' : 'image/jpeg';
+    const processedBuffer = isPdf ? req.file.buffer : await processImage(req.file.buffer);
+    const imageUrl = await uploadToStorage(processedBuffer, req.file.originalname, user.id, mimeType);
     
     let receiptData;
     let recognitionMethod = model;
@@ -655,12 +662,12 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
     
     try {
       if (model.startsWith('gemini')) {
-        receiptData = await recognizeWithGemini(processedBuffer, model, currency, docType);
+        receiptData = await recognizeWithGemini(processedBuffer, model, currency, docType, mimeType);
       } else if (model.startsWith('groq')) {
         receiptData = await recognizeWithGroq(processedBuffer, model, currency, docType);
       } else if (model.startsWith('ocrspace')) {
         const engine = model.replace('ocrspace-', '');
-        receiptData = await recognizeWithOCRSpace(processedBuffer, engine, currency, docType);
+        receiptData = await recognizeWithOCRSpace(processedBuffer, engine, currency, docType, mimeType);
       } else if (model.startsWith('openrouter-')) {
         receiptData = await recognizeWithOpenAICompat(processedBuffer, model.replace(/^openrouter-/, ''), currency, docType, 'openrouter');
       } else if (model.startsWith('github-')) {
@@ -670,7 +677,7 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
       } else if (model.startsWith('kimi-')) {
         receiptData = await recognizeWithOpenAICompat(processedBuffer, model.replace(/^kimi-/, ''), currency, docType, 'kimi');
       } else {
-        const auto = await recognizeWithFallback(processedBuffer, currency, docType);
+        const auto = await recognizeWithFallback(processedBuffer, currency, docType, mimeType);
         receiptData = auto.data;
         recognitionMethod = auto.model;
       }
@@ -678,7 +685,7 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
       console.error('Recognition error:', recognizeError);
       recognizeErrorMsg = recognizeError.response?.data?.error?.message || recognizeError.message;
       try {
-        const auto = await recognizeWithFallback(processedBuffer, currency, docType);
+        const auto = await recognizeWithFallback(processedBuffer, currency, docType, mimeType);
         receiptData = auto.data;
         recognitionMethod = `${model} (fallback → ${auto.model})`;
         fallback = true;
@@ -737,13 +744,14 @@ app.post('/api/reprocess-receipt', requireAuth, async (req, res) => {
     
     const imageRes = await axios.get(receipt.image_url, { responseType: 'arraybuffer' });
     const buffer = Buffer.from(imageRes.data);
+    const mimeType = /\.pdf(\?|$)/i.test(receipt.image_url || '') ? 'application/pdf' : 'image/jpeg';
     
     const currency = req.body.currency || 'auto';
     const docType = req.body.docType || 'receipt';
     
     let receiptData;
     if (model.startsWith('gemini')) {
-      receiptData = await recognizeWithGemini(buffer, model, currency, docType);
+      receiptData = await recognizeWithGemini(buffer, model, currency, docType, mimeType);
     } else if (model.startsWith('groq')) {
       receiptData = await recognizeWithGroq(buffer, model, currency, docType);
     } else if (model.startsWith('openrouter-')) {
@@ -755,7 +763,7 @@ app.post('/api/reprocess-receipt', requireAuth, async (req, res) => {
     } else if (model.startsWith('kimi-')) {
       receiptData = await recognizeWithOpenAICompat(buffer, model.replace(/^kimi-/, ''), currency, docType, 'kimi');
     } else {
-      const auto = await recognizeWithFallback(buffer, currency, docType);
+      const auto = await recognizeWithFallback(buffer, currency, docType, mimeType);
       receiptData = auto.data;
     }
     
