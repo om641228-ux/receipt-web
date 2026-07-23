@@ -58,6 +58,9 @@ const FALLBACK_MODELS = [
   { name: 'github-mistral-ai/Mistral-Small-3.1-24B-Instruct-2503', displayName: 'Mistral Small 3.1 (GitHub)', provider: 'GitHub' },
   { name: 'mistral-pixtral-12b-2409', displayName: 'Pixtral 12B', provider: 'Mistral' },
   { name: 'mistral-mistral-small-latest', displayName: 'Mistral Small Latest', provider: 'Mistral' },
+  { name: 'kimi-moonshot-v1-8k-vision-preview', displayName: 'Kimi Vision 8K', provider: 'Kimi' },
+  { name: 'kimi-moonshot-v1-32k-vision-preview', displayName: 'Kimi Vision 32K', provider: 'Kimi' },
+  { name: 'kimi-moonshot-v1-128k-vision-preview', displayName: 'Kimi Vision 128K', provider: 'Kimi' },
 ];
 
 // Короткие имена Groq → реальные ID из API (для подсветки выбранной строки)
@@ -828,7 +831,8 @@ function App() {
       'OCR.space': '#00a86b',
       'OpenRouter': '#6366f1',
       'GitHub': '#24292f',
-      'Mistral': '#ff7000'
+      'Mistral': '#ff7000',
+      'Kimi': '#8b5cf6'
     };
     return colors[provider] || '#888';
   };

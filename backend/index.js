@@ -62,6 +62,14 @@ const OPENAI_COMPAT_PROVIDERS = {
     defaultModel: 'pixtral-12b-2409',
     fallbackIds: ['pixtral-12b-2409', 'mistral-small-latest'],
     extraHeaders: {}
+  },
+  kimi: {
+    displayName: 'Kimi',
+    baseURL: 'https://api.moonshot.ai/v1',
+    apiKey: process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY || null,
+    defaultModel: 'moonshot-v1-8k-vision-preview',
+    fallbackIds: ['moonshot-v1-8k-vision-preview', 'moonshot-v1-32k-vision-preview', 'moonshot-v1-128k-vision-preview'],
+    extraHeaders: {}
   }
 };
 
@@ -299,7 +307,7 @@ async function recognizeWithFallback(imageBuffer, currency, docType) {
   } catch (e) {
     errors.push(`gemini: ${e.message}`);
   }
-  for (const key of ['openrouter', 'github', 'mistral']) {
+  for (const key of ['openrouter', 'github', 'mistral', 'kimi']) {
     const cfg = OPENAI_COMPAT_PROVIDERS[key];
     if (!cfg.apiKey) { errors.push(`${key}: нет API ключа`); continue; }
     try {
@@ -638,6 +646,8 @@ app.post('/api/upload-receipt', upload.single('image'), async (req, res) => {
         receiptData = await recognizeWithOpenAICompat(processedBuffer, model.replace(/^github-/, ''), currency, docType, 'github');
       } else if (model.startsWith('mistral-')) {
         receiptData = await recognizeWithOpenAICompat(processedBuffer, model.replace(/^mistral-/, ''), currency, docType, 'mistral');
+      } else if (model.startsWith('kimi-')) {
+        receiptData = await recognizeWithOpenAICompat(processedBuffer, model.replace(/^kimi-/, ''), currency, docType, 'kimi');
       } else {
         const auto = await recognizeWithFallback(processedBuffer, currency, docType);
         receiptData = auto.data;
@@ -718,6 +728,8 @@ app.post('/api/reprocess-receipt', requireAuth, async (req, res) => {
       receiptData = await recognizeWithOpenAICompat(buffer, model.replace(/^github-/, ''), currency, docType, 'github');
     } else if (model.startsWith('mistral-')) {
       receiptData = await recognizeWithOpenAICompat(buffer, model.replace(/^mistral-/, ''), currency, docType, 'mistral');
+    } else if (model.startsWith('kimi-')) {
+      receiptData = await recognizeWithOpenAICompat(buffer, model.replace(/^kimi-/, ''), currency, docType, 'kimi');
     } else {
       const auto = await recognizeWithFallback(buffer, currency, docType);
       receiptData = auto.data;
@@ -1066,6 +1078,10 @@ async function listOpenAICompatModels(key) {
       const vis = data.filter(m => m.capabilities?.vision === true).map(m => m.id);
       return vis.length ? vis : cfg.fallbackIds;
     }
+    if (key === 'kimi') {
+      const vis = data.map(m => m.id).filter(id => /vision/i.test(id));
+      return vis.length ? vis : cfg.fallbackIds;
+    }
     // github: OpenAI-стиль списка, фильтруем по известным vision-моделям
     const vis = data.map(m => m.id).filter(id => /4o|4\.1|vision|llama-4|multimodal|pixtral|mistral-small|grok/i.test(id));
     return vis.length ? vis : cfg.fallbackIds;
@@ -1118,13 +1134,14 @@ async function checkOpenAICompatProvider(key) {
 
 app.get('/api/check-models', async (req, res) => {
   try {
-    const [geminiModels, groqModels, ocrModels, openrouterModels, githubModels, mistralModels] = await Promise.all([
+    const [geminiModels, groqModels, ocrModels, openrouterModels, githubModels, mistralModels, kimiModels] = await Promise.all([
       checkGeminiModels().catch(() => []),
       checkGroqModels().catch(() => []),
       checkOCRSpaceModels().catch(() => []),
       checkOpenAICompatProvider('openrouter').catch(() => []),
       checkOpenAICompatProvider('github').catch(() => []),
-      checkOpenAICompatProvider('mistral').catch(() => [])
+      checkOpenAICompatProvider('mistral').catch(() => []),
+      checkOpenAICompatProvider('kimi').catch(() => [])
     ]);
     // Активные сверху, внутри — по имени
     const sortModels = arr => [...arr].sort((a, b) =>
@@ -1138,7 +1155,8 @@ app.get('/api/check-models', async (req, res) => {
         ...sortModels(groqModels),
         ...sortModels(openrouterModels),
         ...sortModels(githubModels),
-        ...sortModels(mistralModels)
+        ...sortModels(mistralModels),
+        ...sortModels(kimiModels)
       ]
     });
   } catch (e) {
