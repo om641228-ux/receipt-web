@@ -58,9 +58,10 @@ const FALLBACK_MODELS = [
   { name: 'github-mistral-ai/Mistral-Small-3.1-24B-Instruct-2503', displayName: 'Mistral Small 3.1 (GitHub)', provider: 'GitHub' },
   { name: 'mistral-pixtral-12b-2409', displayName: 'Pixtral 12B', provider: 'Mistral' },
   { name: 'mistral-mistral-small-latest', displayName: 'Mistral Small Latest', provider: 'Mistral' },
-  { name: 'kimi-moonshot-v1-8k-vision-preview', displayName: 'Kimi Vision 8K', provider: 'Kimi' },
-  { name: 'kimi-moonshot-v1-32k-vision-preview', displayName: 'Kimi Vision 32K', provider: 'Kimi' },
-  { name: 'kimi-moonshot-v1-128k-vision-preview', displayName: 'Kimi Vision 128K', provider: 'Kimi' },
+  { name: 'kimi-kimi-k3', displayName: 'Kimi K3', provider: 'Kimi' },
+  { name: 'kimi-kimi-k2.6', displayName: 'Kimi K2.6', provider: 'Kimi' },
+  { name: 'kimi-moonshot-v1-8k-vision-preview', displayName: 'Kimi Vision 8K (legacy)', provider: 'Kimi' },
+  { name: 'kimi-moonshot-v1-128k-vision-preview', displayName: 'Kimi Vision 128K (legacy)', provider: 'Kimi' },
 ];
 
 // Короткие имена Groq → реальные ID из API (для подсветки выбранной строки)
@@ -1056,10 +1057,19 @@ function App() {
                                 {model.provider}
                               </span>
                             </td>
-                            <td style={{ padding: '7px 6px', borderBottom: '1px solid #eee', whiteSpace: 'nowrap' }}>
-                              {isActive && <span style={{ color: '#2e7d32', fontWeight: 600 }}>✅ Активна</span>}
-                              {!isActive && !isUnknown && <span style={{ color: '#c62828', fontWeight: 600 }}>❌ Не активна</span>}
-                              {isUnknown && <span style={{ color: '#888' }}>➖ Не проверена</span>}
+                            <td style={{ padding: '7px 6px', borderBottom: '1px solid #eee' }}>
+                              {isActive && <span style={{ color: '#2e7d32', fontWeight: 600, whiteSpace: 'nowrap' }}>✅ Активна</span>}
+                              {!isActive && !isUnknown && (
+                                <div>
+                                  <span style={{ color: '#c62828', fontWeight: 600, whiteSpace: 'nowrap' }}>❌ Не активна</span>
+                                  {model.error && (
+                                    <div style={{ fontSize: 10, color: '#b71c1c', marginTop: 2, maxWidth: 220, lineHeight: 1.3 }}>
+                                      {model.error}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {isUnknown && <span style={{ color: '#888', whiteSpace: 'nowrap' }}>➖ Не проверена</span>}
                             </td>
                             <td style={{ padding: '7px 6px', borderBottom: '1px solid #eee', textAlign: 'right', color: '#666', fontSize: 12 }}>
                               {isActive && model.ms != null ? `${(model.ms / 1000).toFixed(1)} с` : '—'}

@@ -67,8 +67,9 @@ const OPENAI_COMPAT_PROVIDERS = {
     displayName: 'Kimi',
     baseURL: 'https://api.moonshot.ai/v1',
     apiKey: process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY || null,
-    defaultModel: 'moonshot-v1-8k-vision-preview',
-    fallbackIds: ['moonshot-v1-8k-vision-preview', 'moonshot-v1-32k-vision-preview', 'moonshot-v1-128k-vision-preview'],
+    // moonshot-v1-* закрыты для новых аккаунтов (sunset 31.08.2026) — дефолт kimi-k3
+    defaultModel: 'kimi-k3',
+    fallbackIds: ['kimi-k3', 'kimi-k2.6', 'moonshot-v1-8k-vision-preview', 'moonshot-v1-32k-vision-preview', 'moonshot-v1-128k-vision-preview'],
     extraHeaders: {}
   }
 };
@@ -1079,7 +1080,11 @@ async function listOpenAICompatModels(key) {
       return vis.length ? vis : cfg.fallbackIds;
     }
     if (key === 'kimi') {
-      const vis = data.map(m => m.id).filter(id => /vision/i.test(id));
+      // vision-модели: kimi-k3, kimi-k2.x (2.5/2.6/2.7), moonshot-v1-*-vision-preview;
+      // исключаем снятые с поддержки kimi-k2-0711/0905/turbo
+      const vis = data.map(m => m.id)
+        .filter(id => /vision|kimi-k3|kimi-k2\.\d/i.test(id))
+        .filter(id => !/kimi-k2-\d|k2-turbo|kimi-latest|thinking-preview/i.test(id));
       return vis.length ? vis : cfg.fallbackIds;
     }
     // github: OpenAI-стиль списка, фильтруем по известным vision-моделям
